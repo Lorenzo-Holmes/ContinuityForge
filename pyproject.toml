@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuityforge"
-version = "0.2.0"
+version = "0.3.0a1"
 description = "Compile source texts into provenance-aware, timeline-safe memory packs for long-lived AI personas."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "ContinuityForge contributors" },
 ]
@@ -24,20 +25,28 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/Lorenzo-Holmes/ContinuityForge"
+Repository = "https://github.com/Lorenzo-Holmes/ContinuityForge"
+Issues = "https://github.com/Lorenzo-Holmes/ContinuityForge/issues"
+Changelog = "https://github.com/Lorenzo-Holmes/ContinuityForge/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<9",
+  "pytest-cov>=6,<8",
+  "build>=1.2,<2",
 ]
 
 [project.scripts]
@@ -53,3 +62,14 @@ where = ["src"]
 addopts = "-q"
 testpaths = ["tests"]
 
+[tool.coverage.run]
+branch = true
+source = ["continuityforge"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+fail_under = 70
+show_missing = true

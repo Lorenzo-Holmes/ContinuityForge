@@ -134,7 +134,7 @@ def test_v01_database_is_migrated_without_silent_data_loss(
     connection.close()
 
     with Storage(db) as storage:
-        assert storage.get_schema_version() == 2
+        assert storage.get_schema_version() == 3
         migrated = storage.get_claim_proposal("legacy-claim-alpha")
         assert migrated.status is GovernanceStatus.AUTHORIZED
         assert migrated.knowledge_from == "2026-01-03T00:00:00Z"

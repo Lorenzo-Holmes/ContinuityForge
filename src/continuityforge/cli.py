@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -14,6 +15,7 @@ from .constants import (
     EXIT_GOVERNANCE_FAILED,
     EXIT_LEDGER_FAILED,
     EXIT_OK,
+    EXIT_SCHEMA_FAILED,
     EXIT_VALIDATION_FAILED,
 )
 from .evidence import EvidenceValidator, build_evidence_ref
@@ -22,9 +24,15 @@ from .exceptions import (
     EvidenceValidationError,
     GovernanceConflictError,
     LedgerIntegrityError,
+    MigrationError,
+    NotFoundError,
+    ReadOnlyStorageError,
+    SchemaError,
 )
 from .governance import ClaimGovernance
-from .ingest import ingest_content, ingest_path
+from .ingest import ingest_content, ingest_path, parse_json_content
+from .inspection import InspectionService
+from .migrations import MigrationMode, migrate_to_v3, preflight_migration
 from .models import (
     AccessPolicy,
     ClaimProposal,
@@ -33,6 +41,7 @@ from .models import (
     NarrativeEvent,
 )
 from .serialization import json_dumps, to_primitive, write_json
+from .readonly import ReadOnlyProject
 from .storage import Storage
 from .timeutil import isoformat_utc
 from .validate import ProjectValidator
@@ -197,6 +206,58 @@ def build_parser() -> argparse.ArgumentParser:
     ledger_show.add_argument("--limit", type=int)
     ledger_show.set_defaults(handler=_handle_ledger_show)
 
+    source_impact = commands.add_parser(
+        "source-impact",
+        help="inspect source-revision impact without changing the project",
+    )
+    source_identity = source_impact.add_mutually_exclusive_group(required=True)
+    source_identity.add_argument("--source-key")
+    source_identity.add_argument("--source-id")
+    source_impact.add_argument("--continuity", required=True)
+    source_impact.add_argument("--from-version", type=int)
+    source_impact.add_argument(
+        "--target-version",
+        "--to-version",
+        dest="target_version",
+        type=int,
+        help="target revision (default: latest)",
+    )
+    source_impact.set_defaults(
+        handler=_handle_source_impact,
+        owns_storage=True,
+        redact_errors=True,
+    )
+
+    migration_check = commands.add_parser(
+        "migration-check",
+        help="run a read-only schema-v3 migration preflight",
+    )
+    migration_check.add_argument(
+        "--mode",
+        choices=[item.value for item in MigrationMode],
+        default=MigrationMode.STRICT.value,
+    )
+    migration_check.set_defaults(
+        handler=_handle_migration_check,
+        owns_storage=True,
+        redact_errors=True,
+    )
+
+    migrate = commands.add_parser(
+        "migrate",
+        help="backup, migrate to schema v3, and verify the result",
+    )
+    migrate.add_argument(
+        "--mode",
+        choices=[item.value for item in MigrationMode],
+        default=MigrationMode.STRICT.value,
+    )
+    migrate.set_defaults(
+        handler=_handle_migrate,
+        owns_storage=True,
+        redact_errors=True,
+    )
+
     demo = commands.add_parser("demo", help="run the Alpha/Beta isolation demo")
     demo.add_argument("--output-dir", type=Path, default=Path("demo-output"))
     demo.add_argument("--reset", action="store_true")
@@ -339,10 +400,7 @@ def _handle_claim_list(storage: Storage, args: argparse.Namespace) -> int:
 
 
 def _handle_event_add(storage: Storage, args: argparse.Namespace) -> int:
-    try:
-        details = json.loads(args.details)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"--details must be valid JSON: {exc}") from exc
+    details = parse_json_content(args.details)
     if not isinstance(details, dict):
         raise ValueError("--details must be a JSON object")
     event = NarrativeEvent(
@@ -416,6 +474,51 @@ def _handle_ledger_show(storage: Storage, args: argparse.Namespace) -> int:
     entries = storage.list_ledger_entries(limit=args.limit)
     print(json_dumps({"entries": entries}))
     return EXIT_OK
+
+
+def _handle_source_impact(
+    _storage: Storage | None, args: argparse.Namespace
+) -> int:
+    """Emit a metadata-only, report-only source revision assessment."""
+
+    with ReadOnlyProject.open(args.db) as repository:
+        report = InspectionService(repository).source_impact(
+            source_id=args.source_id,
+            source_key=args.source_key,
+            continuity=args.continuity,
+            from_version=args.from_version,
+            target_version=args.target_version,
+        )
+    print(json_dumps(report.to_dict()))
+    return EXIT_OK
+
+
+def _handle_migration_check(
+    _storage: Storage | None, args: argparse.Namespace
+) -> int:
+    """Inspect migration eligibility without creating, backing up, or changing DB."""
+
+    report = preflight_migration(
+        args.db,
+        mode=MigrationMode(args.mode),
+        create_backup=False,
+    )
+    print(json_dumps(report.to_dict()))
+    return EXIT_OK if report.is_ready else EXIT_SCHEMA_FAILED
+
+
+def _handle_migrate(_storage: Storage | None, args: argparse.Namespace) -> int:
+    """Run the explicit backup-gated schema-v3 migration workflow."""
+
+    if not args.db.is_file():
+        raise FileNotFoundError(f"project database not found: {args.db}")
+    report = migrate_to_v3(
+        args.db,
+        mode=MigrationMode(args.mode),
+        create_backup=True,
+    )
+    print(json_dumps(report.to_dict()))
+    return EXIT_OK if report.succeeded else EXIT_SCHEMA_FAILED
 
 
 def _handle_demo(_storage: Storage | None, args: argparse.Namespace) -> int:
@@ -509,24 +612,93 @@ def _run(args: argparse.Namespace) -> int:
         return args.handler(storage, args)
 
 
+def _stable_error_code(exc: BaseException) -> str:
+    domain_code = getattr(exc, "code", None)
+    if isinstance(domain_code, str) and domain_code.strip():
+        return domain_code.strip()
+    if isinstance(exc, MigrationError):
+        return "MIGRATION_FAILED"
+    if isinstance(exc, ReadOnlyStorageError):
+        return "READ_ONLY_STORAGE_ERROR"
+    if isinstance(exc, SchemaError):
+        return "SCHEMA_ERROR"
+    if isinstance(exc, EvidenceValidationError):
+        return "EVIDENCE_VALIDATION_FAILED"
+    if isinstance(exc, GovernanceConflictError):
+        return "GOVERNANCE_CONFLICT"
+    if isinstance(exc, LedgerIntegrityError):
+        return "LEDGER_INTEGRITY_FAILED"
+    if isinstance(exc, NotFoundError):
+        return "NOT_FOUND"
+    if isinstance(exc, FileNotFoundError):
+        return "NOT_FOUND"
+    if isinstance(exc, sqlite3.Error):
+        return "SQLITE_ERROR"
+    if isinstance(exc, ContinuityForgeError):
+        return type(exc).__name__.removesuffix("Error").upper()
+    return "INVALID_ARGUMENT"
+
+
+def _public_error_message(
+    exc: BaseException, args: argparse.Namespace
+) -> str:
+    """Keep administrative errors useful without disclosing local DB paths."""
+
+    message = str(exc)
+    if not getattr(args, "redact_errors", False):
+        return message
+    candidates = {str(args.db), str(Path(args.db).expanduser())}
+    try:
+        candidates.add(str(Path(args.db).expanduser().resolve()))
+    except OSError:
+        pass
+    for candidate in sorted(candidates, key=len, reverse=True):
+        if candidate:
+            message = message.replace(candidate, "<DB>")
+    return message
+
+
+def _emit_error(
+    exc: BaseException,
+    args: argparse.Namespace,
+    *, details: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "schema": "continuityforge.error/v0.3",
+        "code": _stable_error_code(exc),
+        # Retained for v0.2 CLI consumers that keyed on the exception name.
+        "error": type(exc).__name__,
+        "message": _public_error_message(exc, args),
+    }
+    if details and not getattr(args, "redact_errors", False):
+        payload.update(details)
+    print(json_dumps(payload), file=sys.stderr)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
         return _run(args)
     except (EvidenceValidationError, GovernanceConflictError) as exc:
-        payload: dict[str, Any] = {"error": type(exc).__name__, "message": str(exc)}
+        details: dict[str, Any] = {}
         if getattr(exc, "report", None) is not None:
-            payload["report"] = exc.report.to_dict()
+            details["report"] = exc.report.to_dict()
         if getattr(exc, "conflicting_ids", None):
-            payload["conflicting_ids"] = exc.conflicting_ids
-        print(json_dumps(payload), file=sys.stderr)
+            details["conflicting_ids"] = exc.conflicting_ids
+        _emit_error(exc, args, details=details)
         return EXIT_GOVERNANCE_FAILED
     except LedgerIntegrityError as exc:
-        print(json_dumps({"error": type(exc).__name__, "message": str(exc)}), file=sys.stderr)
+        _emit_error(exc, args)
         return EXIT_LEDGER_FAILED
+    except (MigrationError, ReadOnlyStorageError, SchemaError, sqlite3.Error) as exc:
+        details = {}
+        if getattr(exc, "report", None) is not None:
+            details["report"] = exc.report.to_dict()
+        _emit_error(exc, args, details=details)
+        return EXIT_SCHEMA_FAILED
     except (ContinuityForgeError, ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
-        print(json_dumps({"error": type(exc).__name__, "message": str(exc)}), file=sys.stderr)
+        _emit_error(exc, args)
         return EXIT_VALIDATION_FAILED
 
 

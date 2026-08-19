@@ -1,0 +1,61 @@
+name: Feature request
+description: Propose a capability or contract change with explicit trust boundaries.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ContinuityForge keeps model suggestions separate from deterministic evidence, governance, and compilation. Describe where your proposal belongs and which invariants it must preserve.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is blocked, and who experiences it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe inputs, outputs, failure behavior, and whether the proposal is deterministic or model-assisted.
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Primary layer
+      options:
+        - Pure deterministic domain logic
+        - SQLite persistence or migration
+        - Read-only inspection or reporting
+        - CLI
+        - LLM proposal adapter
+        - Documentation or demo
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Preserved invariants
+      description: Address continuity isolation, evidence provenance, authority, access, time, immutability, and disclosure as relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals and failure modes
+      description: State what the feature must not infer, mutate, disclose, or silently accept.
+    validations:
+      required: true
+  - type: checkboxes
+    id: status
+    attributes:
+      label: Status awareness
+      options:
+        - label: I distinguished released behavior from implemented but unreleased v0.3 alpha behavior.
+          required: true
+        - label: I did not assume that model confidence grants authority.
+          required: true

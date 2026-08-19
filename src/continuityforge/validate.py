@@ -9,7 +9,9 @@ from enum import Enum
 from typing import Any, Protocol
 
 from .evidence import EvidenceValidator
+from .event_integrity import EventAuditStorage, validate_event_audits
 from .governance import claims_contradict
+from .governance_integrity import AuthorityStorage, validate_claim_authorities
 from .models import (
     ClaimProposal,
     GovernanceStatus,
@@ -70,7 +72,7 @@ class ProjectValidationReport:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
 
-class ValidationStorage(Protocol):
+class ValidationStorage(AuthorityStorage, EventAuditStorage, Protocol):
     def list_claim_proposals(
         self,
         *,
@@ -127,7 +129,20 @@ class ProjectValidator:
         self, claims: list[ClaimProposal], *, strict_proposals: bool
     ) -> list[ProjectIssue]:
         result: list[ProjectIssue] = []
+        authority_reports = validate_claim_authorities(self.storage, claims)
         for claim in claims:
+            authority = authority_reports[claim.claim_id]
+            for authority_issue in authority.issues:
+                result.append(
+                    ProjectIssue(
+                        authority_issue.code,
+                        Severity.ERROR,
+                        authority_issue.message,
+                        "claim",
+                        claim.claim_id,
+                        dict(authority_issue.details),
+                    )
+                )
             for name, start, end in (
                 ("valid", claim.valid_from, claim.valid_to),
                 ("knowledge", claim.knowledge_from, claim.knowledge_to),
@@ -174,7 +189,20 @@ class ProjectValidator:
         except AttributeError:
             return []
         result: list[ProjectIssue] = []
+        audit_reports = validate_event_audits(self.storage, events)
         for event in events:
+            audit = audit_reports[event.event_id]
+            for audit_issue in audit.issues:
+                result.append(
+                    ProjectIssue(
+                        audit_issue.code,
+                        Severity.ERROR,
+                        audit_issue.message,
+                        "narrative_event",
+                        event.event_id,
+                        dict(audit_issue.details),
+                    )
+                )
             for name, start, end in (
                 ("valid", event.valid_from, event.valid_to),
                 ("knowledge", event.knowledge_from, event.knowledge_to),

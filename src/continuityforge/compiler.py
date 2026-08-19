@@ -9,6 +9,9 @@ from typing import Any, Protocol
 
 from .constants import PACKAGE_SCHEMA, V01_PACKAGE_SCHEMA
 from .evidence import EvidenceValidator
+from .event_integrity import EventAuditStorage, validate_event_audits
+from .exceptions import LedgerIntegrityError
+from .governance_integrity import AuthorityStorage, validate_claim_authorities
 from .models import (
     AccessPolicy,
     ClaimProposal,
@@ -23,7 +26,7 @@ from .serialization import write_json
 from .timeutil import contains_instant, isoformat_utc
 
 
-class CompilerStorage(Protocol):
+class CompilerStorage(AuthorityStorage, EventAuditStorage, Protocol):
     def list_claim_proposals(
         self,
         *,
@@ -52,6 +55,8 @@ class CompilerStorage(Protocol):
     ) -> list[NarrativeEvent]: ...
 
     def get_event_evidence(self, event_id: str) -> list[EvidenceRef]: ...
+
+    def verify_ledger(self) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +92,15 @@ class MemoryCompiler:
         self.evidence = EvidenceValidator(storage)
 
     def compile(self, cutoff: MemoryCutoff) -> dict[str, Any]:
+        """Compile against one pinned repository snapshot when supported."""
+
+        read_transaction = getattr(self.storage, "read_transaction", None)
+        if callable(read_transaction):
+            with read_transaction():
+                return self._compile_pinned(cutoff)
+        return self._compile_pinned(cutoff)
+
+    def _compile_pinned(self, cutoff: MemoryCutoff) -> dict[str, Any]:
         if not cutoff.persona_id.strip():
             raise ValueError("persona_id must be non-empty")
         if not cutoff.continuity.strip():
@@ -94,6 +108,31 @@ class MemoryCompiler:
         knowledge_at = isoformat_utc(cutoff.knowledge_at)
         valid_at = isoformat_utc(cutoff.valid_at)
         assert knowledge_at is not None
+
+        # Governance decisions are authoritative only while the database-wide
+        # audit chain that binds them is intact.  Per-claim replay below checks
+        # exact decision correspondence; this global check also detects a
+        # broken predecessor/successor link elsewhere in EventLedger.  Failing
+        # here rather than emitting a partial pack prevents callers from
+        # mistaking a result produced from tampered authority history for a
+        # valid compilation.
+        try:
+            ledger_verdict = self.storage.verify_ledger()
+        except (AttributeError, NotImplementedError) as exc:
+            raise LedgerIntegrityError(
+                "compiler storage cannot verify the EventLedger hash chain"
+            ) from exc
+        ledger_valid = (
+            bool(ledger_verdict[0])
+            if isinstance(ledger_verdict, tuple) and ledger_verdict
+            else bool(
+                getattr(ledger_verdict, "is_valid", ledger_verdict)
+            )
+        )
+        if not ledger_valid:
+            raise LedgerIntegrityError(
+                "EventLedger hash-chain verification failed before compilation"
+            )
 
         allowed = {AccessPolicy(item) for item in cutoff.access_policies}
         # HIDDEN is never exportable, including human inspection packs.
@@ -106,6 +145,7 @@ class MemoryCompiler:
             continuity=cutoff.continuity,
             status=GovernanceStatus.AUTHORIZED,
         )
+        authority_reports = validate_claim_authorities(self.storage, claims)
         for claim in claims:
             if claim.persona_id != cutoff.persona_id or claim.continuity != cutoff.continuity:
                 diagnostics.append(
@@ -127,6 +167,17 @@ class MemoryCompiler:
                         claim.claim_id,
                         "only AUTHORIZED claims may be compiled",
                         {"status": claim.status.value},
+                    )
+                )
+                continue
+            authority = authority_reports[claim.claim_id]
+            if not authority.is_authorized:
+                diagnostics.append(
+                    CompilationDiagnostic(
+                        "AUTHORITY_CHAIN_INVALID",
+                        claim.claim_id,
+                        "claim status is not backed by a complete decision and ledger chain",
+                        authority.to_dict(),
                     )
                 )
                 continue
@@ -264,6 +315,7 @@ class MemoryCompiler:
             # Storage implementations from the v0.1 embedding API did not have
             # narrative events; compiling claims remains backward compatible.
             return []
+        audit_reports = validate_event_audits(self.storage, events)
         result: list[dict[str, Any]] = []
         for event in events:
             if event.persona_id != cutoff.persona_id or event.continuity != cutoff.continuity:
@@ -277,6 +329,17 @@ class MemoryCompiler:
                 valid_to=event.valid_to,
                 cutoff=cutoff,
             ):
+                continue
+            audit = audit_reports[event.event_id]
+            if not audit.is_valid:
+                diagnostics.append(
+                    CompilationDiagnostic(
+                        "EVENT_AUDIT_INVALID",
+                        event.event_id,
+                        "narrative event is not backed by one complete ledger record",
+                        audit.to_dict(),
+                    )
+                )
                 continue
             try:
                 refs = self.storage.get_event_evidence(event.event_id)

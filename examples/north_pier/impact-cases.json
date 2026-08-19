@@ -1,0 +1,59 @@
+{
+  "schema": "continuityforge.demo-impact-cases/v1",
+  "schema_stability": "demo-only; not a released CLI or API schema",
+  "license": "CC0-1.0",
+  "source_key": "north-pier-field-log",
+  "continuity": "alpha",
+  "from_version": 1,
+  "target_version": 2,
+  "cases": [
+    {
+      "case_id": "arrival-same-position",
+      "owner_type": "claim",
+      "owner_id": "DEMO_CLAIM_ARRIVAL",
+      "original_span": {"start_line": 2, "end_line": 2},
+      "quote": "2026-01-01 — Mira arrived at North Pier before dawn.",
+      "content_hash": "699ec740633650dd7caf49f31358c8eafd91350a47f2a49b63d0dcbe12f37f9a",
+      "expected_outcome": "SAME_POSITION",
+      "expected_candidate_spans": [
+        {"start_line": 2, "end_line": 2}
+      ]
+    },
+    {
+      "case_id": "custody-moved-unique",
+      "owner_type": "event",
+      "owner_id": "DEMO_EVENT_CUSTODY",
+      "operator_authored": true,
+      "original_span": {"start_line": 4, "end_line": 5},
+      "quote": "Rowan logged the compass in the harbor register.\nAt sunset, Rowan sealed the compass inside Locker Seven.",
+      "content_hash": "0bc98abb8cee525638ff53d7f3bbde9ab749e4096bc9eface9186337e9fe2979",
+      "expected_outcome": "EXACT_MOVED_UNIQUE",
+      "expected_candidate_spans": [
+        {"start_line": 5, "end_line": 6}
+      ]
+    },
+    {
+      "case_id": "maintenance-moved-ambiguous",
+      "owner_type": "claim",
+      "owner_id": "DEMO_CLAIM_MAINTENANCE",
+      "original_span": {"start_line": 8, "end_line": 8},
+      "quote": "Maintenance note: inspect the north hinge.",
+      "content_hash": "06ec1aec5901da0d7e14f90eda63637b0cc5fca8920376ff35e6da79f438c33e",
+      "expected_outcome": "EXACT_MOVED_AMBIGUOUS",
+      "expected_candidate_spans": [
+        {"start_line": 9, "end_line": 9},
+        {"start_line": 11, "end_line": 11}
+      ]
+    },
+    {
+      "case_id": "knowledge-edited",
+      "owner_type": "claim",
+      "owner_id": "DEMO_CLAIM_KNOWLEDGE",
+      "original_span": {"start_line": 6, "end_line": 6},
+      "quote": "Mira left the archive without learning the locker code.",
+      "content_hash": "44c1dc13dfe680a1fddff3d07ab3fe1e7030839f04648442ba4fc590b7322868",
+      "expected_outcome": "NO_EXACT_MATCH",
+      "expected_candidate_spans": []
+    }
+  ]
+}

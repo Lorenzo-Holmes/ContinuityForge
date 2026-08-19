@@ -1,0 +1,84 @@
+name: Bug report
+description: Report reproducible behavior that violates a released contract.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve ContinuityForge. Remove source text, quotes, database content, tokens, and personal information before posting. Report security vulnerabilities through the private advisory link instead.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Source ingestion or versioning
+        - Evidence validation
+        - Claim governance
+        - NarrativeEvent handling
+        - Memory Pack compilation
+        - EventLedger verification
+        - Snapshot Impact (v0.3 development)
+        - Migration or backup/restore (v0.3 development)
+        - Read-only inspection (v0.3 development)
+        - Documentation or packaging
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ContinuityForge version or commit
+      placeholder: "0.2.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and installation method.
+      placeholder: "Windows 11, Python 3.12, editable install"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Use synthetic text and a temporary database. Include exact commands or a small Python snippet.
+      placeholder: |
+        1. Create a temporary database...
+        2. Ingest a synthetic source...
+        3. Run...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Cite the README or design contract when possible.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include redacted error output and stable error codes where available.
+    validations:
+      required: true
+  - type: textarea
+    id: integrity
+    attributes:
+      label: Integrity observations
+      description: Did the database, ledger, claim status, or source versions change unexpectedly?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I reproduced this with synthetic data and the latest relevant revision.
+          required: true
+        - label: I removed source bodies, secrets, personal data, and database files from this public report.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true

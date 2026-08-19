@@ -1,0 +1,50 @@
+name: Documentation issue
+description: Report unclear, stale, broken, or contradictory documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document and section
+      placeholder: "docs/SNAPSHOT_IMPACT.md — Trust boundary"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Issue type
+      options:
+        - Broken link or command
+        - Released/planned status is unclear
+        - Contract contradicts implementation
+        - Security or disclosure wording is unclear
+        - Missing example
+        - Typo or readability
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current wording or behavior
+      description: Quote only the smallest relevant repository passage. Do not include private source data.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Suggested correction
+      description: Explain the expected wording, link, or example.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I checked the current default branch.
+          required: true
+        - label: I did not include secrets, source bodies, personal data, or vulnerability details.
+          required: true

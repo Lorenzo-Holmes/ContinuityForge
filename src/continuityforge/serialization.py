@@ -37,6 +37,7 @@ def json_dumps(value: Any, *, pretty: bool = True) -> str:
     return json.dumps(
         to_primitive(value),
         ensure_ascii=False,
+        allow_nan=False,
         sort_keys=True,
         indent=2 if pretty else None,
         separators=None if pretty else (",", ":"),
@@ -52,4 +53,3 @@ def write_json(path: str | Path, value: Any) -> Path:
     temporary.write_text(f"{json_dumps(value)}\n", encoding="utf-8")
     temporary.replace(destination)
     return destination.resolve()
-

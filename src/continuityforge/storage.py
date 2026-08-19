@@ -15,19 +15,27 @@ from datetime import datetime, timezone
 from enum import Enum
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import sqlite3
 import threading
+import unicodedata
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 from uuid import uuid4
 
+from .constants import SCHEMA_VERSION
+from .evidence import validate_line_range_types
 from .exceptions import (
     ContinuityViolation,
     InvalidTransitionError,
     LedgerIntegrityError,
+    MigrationError,
     NotFoundError,
+    ReadOnlyStorageError,
     SchemaError,
 )
+from .migrations import MigrationMode, MigrationReport, preflight_migration
+from .ingest import parse_json_content
 from .models import (
     AccessPolicy,
     ClaimProposal,
@@ -41,10 +49,14 @@ from .models import (
     SourceSnapshot,
 )
 from .timeutil import isoformat_utc, validate_interval
+from .schema import SchemaKind, fingerprint_schema, validate_schema
 
 
-SCHEMA_VERSION = 2
 GENESIS_HASH = "0" * 64
+MAX_EVENT_DETAILS_JSON_BYTES = 1024 * 1024
+MAX_EVENT_DETAILS_DEPTH = 128
+MAX_METADATA_UTF8_BYTES = 4096
+_BIDI_CONTROL_CLASSES = frozenset({"RLE", "LRE", "RLO", "LRO", "PDF", "RLI", "LRI", "FSI", "PDI"})
 
 
 def _now() -> str:
@@ -85,6 +97,59 @@ def _canonical_json(value: object) -> str:
     )
 
 
+def _strict_json_object(value: object) -> tuple[dict[str, Any], str]:
+    """Validate and canonically encode one untrusted JSON object."""
+
+    if not isinstance(value, Mapping):
+        raise TypeError("event details must be a JSON object")
+    pending: list[tuple[object, int]] = [(value, 1)]
+    seen: set[int] = set()
+    while pending:
+        item, depth = pending.pop()
+        if depth > MAX_EVENT_DETAILS_DEPTH:
+            raise ValueError("event details exceed the JSON nesting limit")
+        if isinstance(item, Mapping):
+            marker = id(item)
+            if marker in seen:
+                raise ValueError("event details contain a cyclic/shared container")
+            seen.add(marker)
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise TypeError("event details object keys must be strings")
+                pending.append((child, depth + 1))
+        elif isinstance(item, list):
+            marker = id(item)
+            if marker in seen:
+                raise ValueError("event details contain a cyclic/shared container")
+            seen.add(marker)
+            pending.extend((child, depth + 1) for child in item)
+        elif item is None or isinstance(item, (str, bool, int)):
+            continue
+        elif isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError("event details contain a non-finite number")
+            continue
+        else:
+            raise TypeError("event details contain a non-JSON value")
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        size = len(encoded.encode("utf-8"))
+    except (TypeError, ValueError, OverflowError, UnicodeError, RecursionError) as exc:
+        raise ValueError("event details are not deterministic JSON") from exc
+    if size > MAX_EVENT_DETAILS_JSON_BYTES:
+        raise ValueError("event details exceed the JSON byte limit")
+    decoded = parse_json_content(encoded)
+    if not isinstance(decoded, dict):  # defensive: top-level Mapping encoded oddly
+        raise TypeError("event details must encode a JSON object")
+    return decoded, encoded
+
+
 def _parse_json(value: str | None, *, fallback: object) -> object:
     if value is None:
         return fallback
@@ -95,9 +160,23 @@ def _parse_json(value: str | None, *, fallback: object) -> object:
 
 
 def _nonempty(value: object, *, name: str) -> str:
-    text = str(value).strip() if value is not None else ""
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    text = value.strip()
     if not text:
         raise ValueError(f"{name} must not be empty")
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError(f"{name} contains invalid Unicode") from exc
+    if size > MAX_METADATA_UTF8_BYTES:
+        raise ValueError(f"{name} exceeds the metadata byte limit")
+    if any(
+        unicodedata.category(character) in {"Cc", "Cs"}
+        or unicodedata.bidirectional(character) in _BIDI_CONTROL_CLASSES
+        for character in text
+    ):
+        raise ValueError(f"{name} contains unsafe control characters")
     return text
 
 
@@ -151,9 +230,17 @@ class Storage:
         *,
         initialize: bool = True,
         timeout: float = 30.0,
+        readonly: bool = False,
+        migration_mode: MigrationMode | str = MigrationMode.STRICT,
+        create_backup: bool = True,
     ) -> None:
         self.database = str(database)
         self.timeout = timeout
+        self.readonly = bool(readonly)
+        self.migration_mode = MigrationMode(migration_mode)
+        self.create_backup = bool(create_backup)
+        self.migration_report: MigrationReport | None = None
+        self._quarantined_legacy: set[tuple[str, str]] = set()
         self._connection: sqlite3.Connection | None = None
         self._lock = threading.RLock()
         self._transaction_depth = 0
@@ -170,40 +257,215 @@ class Storage:
         return self._connection
 
     def initialize(self) -> "Storage":
-        """Open the database, create v2, or transactionally migrate legacy v0.1."""
+        """Open v3, create it, or transactionally migrate a recognized layout."""
 
         with self._lock:
             if self._connection is not None:
                 return self
 
-            if self.database not in {":memory:", ""} and not self.database.startswith("file:"):
+            if (
+                not self.readonly
+                and self.database not in {":memory:", ""}
+                and not self.database.startswith("file:")
+            ):
                 Path(self.database).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
+            database_argument = self.database
+            uri = self.database.startswith("file:")
+            if self.readonly:
+                if self.database in {":memory:", ""}:
+                    raise ReadOnlyStorageError("read-only storage requires a database path")
+                if not uri:
+                    path = Path(self.database).expanduser().resolve()
+                    database_argument = path.as_uri() + "?mode=ro"
+                    uri = True
             connection = sqlite3.connect(
-                self.database,
+                database_argument,
                 timeout=self.timeout,
                 isolation_level=None,
                 check_same_thread=False,
-                uri=self.database.startswith("file:"),
+                uri=uri,
             )
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 30000")
-            if self.database != ":memory:":
-                connection.execute("PRAGMA journal_mode = WAL")
             self._connection = connection
 
             try:
+                source = fingerprint_schema(connection)
+                if self.readonly:
+                    if source.kind is not SchemaKind.V03:
+                        raise ReadOnlyStorageError(
+                            "read-only storage opens only a complete schema v3 database; "
+                            f"found {source.kind.value}"
+                        )
+                    target = validate_schema(connection)
+                    self.migration_report = MigrationReport(
+                        mode=self.migration_mode,
+                        source=source,
+                        target=target,
+                        status="already-current",
+                        quick_check="ok",
+                    )
+                    return self
+
+                if source.kind is SchemaKind.V03:
+                    target = validate_schema(connection)
+                    self.migration_report = MigrationReport(
+                        mode=self.migration_mode,
+                        source=source,
+                        target=target,
+                        status="already-current",
+                        quick_check="ok",
+                    )
+                    return self
+
+                if source.kind in {SchemaKind.UNKNOWN, SchemaKind.PARTIAL}:
+                    report = preflight_migration(
+                        connection,
+                        mode=self.migration_mode,
+                        create_backup=False,
+                    )
+                    self.migration_report = report
+                    raise MigrationError(
+                        "database failed the schema migration preflight",
+                        report=report,
+                    )
+
+                # Hold a RESERVED lock across preflight, backup, and DDL.  A
+                # second writer therefore cannot invalidate the inspected
+                # fingerprint or make the backup differ from migrated input.
                 connection.execute("BEGIN IMMEDIATE")
-                self._initialize_or_migrate(connection)
+                locked_source = fingerprint_schema(connection)
+                if locked_source.digest != source.digest:
+                    report = MigrationReport(
+                        mode=self.migration_mode,
+                        source=locked_source,
+                        status="failed",
+                        quick_check="not-run",
+                    )
+                    self.migration_report = report
+                    raise MigrationError(
+                        "database changed while acquiring the migration lock",
+                        report=report,
+                    )
+                report = preflight_migration(
+                    connection,
+                    mode=self.migration_mode,
+                    create_backup=self.create_backup,
+                )
+                self.migration_report = report
+                if not report.is_ready:
+                    raise MigrationError(
+                        "database failed the schema migration preflight",
+                        report=report,
+                    )
+
+                self._quarantined_legacy = set(report.quarantined)
+                self._initialize_or_migrate(connection, source.kind)
+                # The target schema and audit chain are part of the migration
+                # transaction's commit gate.  A post-COMMIT validation would
+                # report failure after making the destructive phase durable.
+                target = validate_schema(connection)
+                if not self.verify_ledger():
+                    raise LedgerIntegrityError(
+                        "migrated EventLedger failed verification before commit"
+                    )
+                from .event_integrity import validate_event_audits
+                from .governance_integrity import validate_claim_authorities
+                from .evidence import EvidenceValidator
+
+                claims = self.list_claim_proposals()
+                events = self.list_narrative_events()
+                claim_reports = validate_claim_authorities(self, claims)
+                event_reports = validate_event_audits(self, events)
+                evidence_validator = EvidenceValidator(self)
+                evidence_valid = all(
+                    evidence_validator.validate_claim(
+                        claim, self.get_claim_evidence(claim.claim_id)
+                    ).is_valid
+                    for claim in claims
+                    if claim.status is GovernanceStatus.AUTHORIZED
+                ) and all(
+                    evidence_validator.validate_claim(
+                        event, self.get_event_evidence(event.event_id)
+                    ).is_valid
+                    for event in events
+                )
+                if any(not report.is_valid for report in claim_reports.values()) or any(
+                    not report.is_valid for report in event_reports.values()
+                ) or not evidence_valid:
+                    raise LedgerIntegrityError(
+                        "migrated domain rows failed authority/audit replay before commit"
+                    )
+                count_tables = {
+                    "sources": "sources",
+                    "snapshots": "source_snapshots",
+                    "claims": "claim_proposals",
+                    "evidence": "evidence_refs",
+                    "events": "narrative_events",
+                    "event_evidence": "event_evidence_refs",
+                    "decisions": "governance_decisions",
+                    "ledger": "event_ledger",
+                    "legacy_records": "legacy_records",
+                }
+                migrated_counts = tuple(
+                    (
+                        label,
+                        int(
+                            connection.execute(
+                                f"SELECT COUNT(*) FROM {_identifier(table)}"
+                            ).fetchone()[0]
+                        ),
+                    )
+                    for label, table in count_tables.items()
+                )
                 connection.execute("COMMIT")
-            except BaseException:
+                self.migration_report = replace(
+                    report,
+                    status=(
+                        "initialized"
+                        if source.kind is SchemaKind.EMPTY
+                        else "migrated"
+                    ),
+                    target=target,
+                    migrated_counts=migrated_counts,
+                    finished_at=_now(),
+                )
+            except BaseException as exc:
                 if connection.in_transaction:
                     connection.execute("ROLLBACK")
                 connection.close()
                 self._connection = None
+                if isinstance(exc, (MigrationError, ReadOnlyStorageError, SchemaError)):
+                    raise
+                if self.migration_report is not None:
+                    self.migration_report = replace(
+                        self.migration_report,
+                        status="failed",
+                        finished_at=_now(),
+                    )
+                    raise MigrationError(
+                        "schema migration transaction failed",
+                        report=self.migration_report,
+                    ) from exc
                 raise
         return self
+
+    @classmethod
+    def open_readonly(
+        cls, database: str | Path, *, timeout: float = 30.0
+    ) -> "Storage":
+        """Open an existing v3 database through SQLite ``mode=ro``.
+
+        This entry point never creates a file, runs DDL, migrates, or changes a
+        journal mode.
+        """
+
+        return cls(database, timeout=timeout, readonly=True)
+
+    # Common spelling retained for callers that separate the words.
+    open_read_only = open_readonly
 
     def close(self) -> None:
         with self._lock:
@@ -224,6 +486,8 @@ class Storage:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Open an immediate transaction, nesting safely through savepoints."""
 
+        if self.readonly:
+            raise ReadOnlyStorageError("read-only storage does not allow transactions")
         connection = self.connection
         with self._lock:
             depth = self._transaction_depth
@@ -250,6 +514,30 @@ class Storage:
                 else:
                     connection.execute(f"RELEASE SAVEPOINT {_identifier(savepoint)}")
 
+    @contextmanager
+    def read_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Pin all reads in the context to one SQLite snapshot.
+
+        The context is nestable and reuses an active write transaction.  It
+        deliberately holds the per-storage re-entrant lock so another thread
+        cannot interleave operations on the same SQLite connection.
+        """
+
+        connection = self.connection
+        with self._lock:
+            started = not connection.in_transaction
+            if started:
+                connection.execute("BEGIN")
+            try:
+                yield connection
+            except BaseException:
+                if started and connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+            else:
+                if started and connection.in_transaction:
+                    connection.execute("COMMIT")
+
     # ------------------------------------------------------------------
     # Schema creation and v0.1 migration
     # ------------------------------------------------------------------
@@ -258,23 +546,13 @@ class Storage:
         row = self.connection.execute("PRAGMA user_version").fetchone()
         return int(row[0]) if row else 0
 
-    def _initialize_or_migrate(self, connection: sqlite3.Connection) -> None:
-        pragma_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if pragma_version > SCHEMA_VERSION:
-            raise SchemaError(
-                f"database schema {pragma_version} is newer than supported {SCHEMA_VERSION}"
-            )
+    def _initialize_or_migrate(
+        self, connection: sqlite3.Connection, source_kind: SchemaKind
+    ) -> None:
+        """Apply one preflight-approved migration edge inside the caller transaction."""
 
-        tables = self._table_names(connection)
-        metadata_version = (
-            self._metadata_version(connection) if "schema_metadata" in tables else None
-        )
-        if metadata_version is not None and metadata_version > SCHEMA_VERSION:
-            raise SchemaError(
-                f"database metadata schema {metadata_version} is newer than supported "
-                f"{SCHEMA_VERSION}"
-            )
-        if self._looks_like_v2(connection, tables):
+        if source_kind is SchemaKind.V02:
+            tables = self._table_names(connection)
             added_event_evidence = "event_evidence_refs" not in tables
             removed_hash_constraint = self._snapshot_hash_has_unique_constraint(connection)
             if removed_hash_constraint:
@@ -283,6 +561,8 @@ class Storage:
                 retained_table = None
             self._create_schema_v2(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self._backfill_claim_authority_ledger(connection)
+            self._backfill_event_audit_ledger(connection)
             if removed_hash_constraint:
                 self._append_ledger_in_transaction(
                     connection,
@@ -305,11 +585,24 @@ class Storage:
                         "invariant": "narrative event provenance is immutable",
                     },
                 )
+            self._append_ledger_in_transaction(
+                connection,
+                event_type="schema.migrated",
+                aggregate_type="schema",
+                aggregate_id=f"2->{SCHEMA_VERSION}",
+                payload={
+                    "from_schema_version": 2,
+                    "to_schema_version": SCHEMA_VERSION,
+                    "authority_ledger_backfill": True,
+                },
+            )
+            self._install_v3_triggers(connection)
             return
 
-        if not tables:
+        if source_kind is SchemaKind.EMPTY:
             self._create_schema_v2(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self._install_v3_triggers(connection)
             self._append_ledger_in_transaction(
                 connection,
                 event_type="schema.initialized",
@@ -319,7 +612,15 @@ class Storage:
             )
             return
 
-        self._migrate_legacy_v1(connection, tables, pragma_version)
+        if source_kind is SchemaKind.V01:
+            tables = self._table_names(connection)
+            self._migrate_legacy_v1(connection, tables, 1)
+            self._install_v3_triggers(connection)
+            return
+
+        raise SchemaError(
+            f"migration source is not admitted: {source_kind.value}"
+        )
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> list[str]:
@@ -721,7 +1022,7 @@ class Storage:
         connection.execute(
             "INSERT OR IGNORE INTO schema_metadata "
             "(singleton, schema_version, migrated_at, migration_notes) VALUES (1, ?, ?, ?)",
-            (SCHEMA_VERSION, timestamp, "ContinuityForge v0.2 schema"),
+            (SCHEMA_VERSION, timestamp, "ContinuityForge v0.3 schema"),
         )
         existing = connection.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton = 1"
@@ -732,8 +1033,309 @@ class Storage:
             connection.execute(
                 "UPDATE schema_metadata SET schema_version = ?, migrated_at = ?, "
                 "migration_notes = ? WHERE singleton = 1",
-                (SCHEMA_VERSION, timestamp, "Migrated to ContinuityForge v0.2"),
+                (SCHEMA_VERSION, timestamp, "Migrated to ContinuityForge v0.3"),
             )
+
+    def _install_v3_triggers(self, connection: sqlite3.Connection) -> None:
+        """Install v3's application-integrity and immutability boundary.
+
+        This method is called only while creating or migrating a database.
+        Opening an already-current database performs no DDL.
+        """
+
+        self._execute_script_atomic(
+            connection,
+            """
+            DROP TRIGGER IF EXISTS continuityforge_claims_insert_proposed;
+            DROP TRIGGER IF EXISTS continuityforge_claims_fields_immutable;
+            DROP TRIGGER IF EXISTS continuityforge_claims_no_delete;
+            DROP TRIGGER IF EXISTS continuityforge_claims_status_transition;
+            DROP TRIGGER IF EXISTS continuityforge_evidence_reviewable_insert;
+            DROP TRIGGER IF EXISTS continuityforge_decision_transition_insert;
+            DROP TRIGGER IF EXISTS continuityforge_events_no_update;
+            DROP TRIGGER IF EXISTS continuityforge_events_no_delete;
+            DROP TRIGGER IF EXISTS continuityforge_snapshot_lineage_insert;
+            DROP TRIGGER IF EXISTS continuityforge_evidence_continuity_insert;
+            DROP TRIGGER IF EXISTS continuityforge_event_evidence_continuity_insert;
+
+            CREATE TRIGGER continuityforge_claims_insert_proposed
+            BEFORE INSERT ON claim_proposals
+            WHEN NEW.status <> 'PROPOSED'
+            BEGIN
+                SELECT RAISE(ABORT, 'ClaimProposal rows must begin as PROPOSED');
+            END;
+
+            CREATE TRIGGER continuityforge_claims_fields_immutable
+            BEFORE UPDATE ON claim_proposals
+            WHEN OLD.claim_id IS NOT NEW.claim_id
+              OR OLD.persona_id IS NOT NEW.persona_id
+              OR OLD.continuity IS NOT NEW.continuity
+              OR OLD.text IS NOT NEW.text
+              OR OLD.subject IS NOT NEW.subject
+              OR OLD.predicate IS NOT NEW.predicate
+              OR OLD.object_value IS NOT NEW.object_value
+              OR OLD.valid_from IS NOT NEW.valid_from
+              OR OLD.valid_to IS NOT NEW.valid_to
+              OR OLD.knowledge_from IS NOT NEW.knowledge_from
+              OR OLD.knowledge_to IS NOT NEW.knowledge_to
+              OR OLD.access_policy IS NOT NEW.access_policy
+              OR OLD.confidence IS NOT NEW.confidence
+              OR OLD.proposed_by IS NOT NEW.proposed_by
+              OR OLD.proposal_model IS NOT NEW.proposal_model
+              OR OLD.rationale IS NOT NEW.rationale
+              OR OLD.created_at IS NOT NEW.created_at
+            BEGIN
+                SELECT RAISE(ABORT, 'ClaimProposal content is immutable');
+            END;
+
+            CREATE TRIGGER continuityforge_claims_no_delete
+            BEFORE DELETE ON claim_proposals BEGIN
+                SELECT RAISE(ABORT, 'ClaimProposal rows cannot be deleted');
+            END;
+
+            CREATE TRIGGER continuityforge_claims_status_transition
+            BEFORE UPDATE OF status, updated_at ON claim_proposals
+            WHEN OLD.status IS NOT NEW.status OR OLD.updated_at IS NOT NEW.updated_at
+            BEGIN
+                SELECT CASE
+                    WHEN OLD.status = NEW.status
+                    THEN RAISE(ABORT, 'updated_at changes require a governance transition')
+                END;
+                SELECT CASE
+                    WHEN NOT (
+                        (OLD.status = 'PROPOSED' AND NEW.status IN ('AUTHORIZED', 'REJECTED', 'DISPUTED'))
+                        OR (OLD.status = 'AUTHORIZED' AND NEW.status = 'DISPUTED')
+                        OR (OLD.status = 'REJECTED' AND NEW.status = 'DISPUTED')
+                        OR (OLD.status = 'DISPUTED' AND NEW.status IN ('AUTHORIZED', 'REJECTED'))
+                    )
+                    THEN RAISE(ABORT, 'invalid ClaimProposal governance transition')
+                END;
+                SELECT CASE
+                    WHEN NOT EXISTS (
+                        SELECT 1 FROM governance_decisions gd
+                        WHERE gd.claim_id = OLD.claim_id
+                          AND gd.from_status = OLD.status
+                          AND gd.to_status = NEW.status
+                          AND gd.decided_at = NEW.updated_at
+                    )
+                    THEN RAISE(ABORT, 'ClaimProposal status requires GovernanceDecision')
+                END;
+            END;
+
+            CREATE TRIGGER continuityforge_evidence_reviewable_insert
+            BEFORE INSERT ON evidence_refs
+            WHEN COALESCE(
+                (SELECT status FROM claim_proposals WHERE claim_id = NEW.claim_id),
+                ''
+            ) NOT IN ('PROPOSED', 'DISPUTED')
+            BEGIN
+                SELECT RAISE(ABORT, 'evidence can be appended only while a claim is reviewable');
+            END;
+
+            CREATE TRIGGER continuityforge_decision_transition_insert
+            BEFORE INSERT ON governance_decisions
+            BEGIN
+                SELECT CASE
+                    WHEN NEW.from_status <> COALESCE(
+                        (SELECT status FROM claim_proposals WHERE claim_id = NEW.claim_id),
+                        ''
+                    )
+                    THEN RAISE(ABORT, 'GovernanceDecision from_status differs from claim status')
+                END;
+                SELECT CASE
+                    WHEN NOT (
+                        (NEW.from_status = 'PROPOSED' AND NEW.to_status IN ('AUTHORIZED', 'REJECTED', 'DISPUTED'))
+                        OR (NEW.from_status = 'AUTHORIZED' AND NEW.to_status = 'DISPUTED')
+                        OR (NEW.from_status = 'REJECTED' AND NEW.to_status = 'DISPUTED')
+                        OR (NEW.from_status = 'DISPUTED' AND NEW.to_status IN ('AUTHORIZED', 'REJECTED'))
+                    )
+                    THEN RAISE(ABORT, 'invalid GovernanceDecision transition')
+                END;
+                SELECT CASE
+                    WHEN length(trim(NEW.reviewer)) = 0 OR length(trim(NEW.reason)) = 0
+                    THEN RAISE(ABORT, 'GovernanceDecision attribution is required')
+                END;
+            END;
+
+            CREATE TRIGGER continuityforge_events_no_update
+            BEFORE UPDATE ON narrative_events BEGIN
+                SELECT RAISE(ABORT, 'NarrativeEvent rows are immutable');
+            END;
+            CREATE TRIGGER continuityforge_events_no_delete
+            BEFORE DELETE ON narrative_events BEGIN
+                SELECT RAISE(ABORT, 'NarrativeEvent rows are immutable');
+            END;
+
+            CREATE TRIGGER continuityforge_snapshot_lineage_insert
+            BEFORE INSERT ON source_snapshots
+            BEGIN
+                SELECT CASE
+                    WHEN NEW.version = 1 AND NEW.previous_snapshot_id IS NOT NULL
+                    THEN RAISE(ABORT, 'first SourceSnapshot cannot have a predecessor')
+                END;
+                SELECT CASE
+                    WHEN NEW.version > 1 AND NOT EXISTS (
+                        SELECT 1 FROM source_snapshots previous
+                        WHERE previous.snapshot_id = NEW.previous_snapshot_id
+                          AND previous.source_id = NEW.source_id
+                          AND previous.version = NEW.version - 1
+                    )
+                    THEN RAISE(ABORT, 'SourceSnapshot predecessor must be the prior source version')
+                END;
+            END;
+
+            CREATE TRIGGER continuityforge_evidence_continuity_insert
+            BEFORE INSERT ON evidence_refs
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM claim_proposals cp
+                JOIN source_snapshots ss ON ss.snapshot_id = NEW.snapshot_id
+                JOIN sources s ON s.source_id = ss.source_id
+                WHERE cp.claim_id = NEW.claim_id
+                  AND cp.continuity = s.continuity
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'EvidenceRef crosses a continuity boundary');
+            END;
+
+            CREATE TRIGGER continuityforge_event_evidence_continuity_insert
+            BEFORE INSERT ON event_evidence_refs
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM narrative_events ne
+                JOIN source_snapshots ss ON ss.snapshot_id = NEW.snapshot_id
+                JOIN sources s ON s.source_id = ss.source_id
+                WHERE ne.event_id = NEW.event_id
+                  AND ne.continuity = s.continuity
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'NarrativeEvent evidence crosses a continuity boundary');
+            END;
+            """,
+        )
+
+    def _backfill_claim_authority_ledger(
+        self, connection: sqlite3.Connection
+    ) -> int:
+        """Backfill the all-or-nothing authority stream omitted by old migration.
+
+        Normal v0.2 claims already have complete streams and remain untouched.
+        Preflight rejects partially present streams, so an empty stream is the
+        only backfill case admitted here.
+        """
+
+        count = 0
+        claims = connection.execute(
+            "SELECT * FROM claim_proposals ORDER BY created_at, claim_id"
+        ).fetchall()
+        for claim in claims:
+            claim_id = str(claim["claim_id"])
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM event_ledger WHERE aggregate_type = 'claim' "
+                "AND aggregate_id = ? AND event_type IN "
+                "('claim.proposed', 'claim.governance_decided')",
+                (claim_id,),
+            ).fetchone()
+            if existing and int(existing[0]):
+                continue
+            evidence_rows = connection.execute(
+                "SELECT evidence_id FROM evidence_refs WHERE claim_id = ? "
+                "ORDER BY snapshot_id, start_line, end_line, evidence_id",
+                (claim_id,),
+            ).fetchall()
+            self._append_ledger_in_transaction(
+                connection,
+                event_type="claim.proposed",
+                aggregate_type="claim",
+                aggregate_id=claim_id,
+                payload={
+                    "persona_id": str(claim["persona_id"]),
+                    "continuity": str(claim["continuity"]),
+                    "text": str(claim["text"]),
+                    "access_policy": str(claim["access_policy"]),
+                    "confidence": float(claim["confidence"]),
+                    "evidence_ids": [str(row[0]) for row in evidence_rows],
+                },
+                created_at=str(claim["created_at"]),
+            )
+            count += 1
+            decisions = connection.execute(
+                "SELECT rowid, * FROM governance_decisions WHERE claim_id = ? "
+                "ORDER BY rowid",
+                (claim_id,),
+            ).fetchall()
+            for decision in decisions:
+                self._append_ledger_in_transaction(
+                    connection,
+                    event_type="claim.governance_decided",
+                    aggregate_type="claim",
+                    aggregate_id=claim_id,
+                    payload={
+                        "decision_id": str(decision["decision_id"]),
+                        "from_status": str(decision["from_status"]),
+                        "to_status": str(decision["to_status"]),
+                        "reviewer": str(decision["reviewer"]),
+                        "reason": str(decision["reason"]),
+                    },
+                    created_at=str(decision["decided_at"]),
+                )
+                count += 1
+        return count
+
+    def _backfill_event_audit_ledger(self, connection: sqlite3.Connection) -> int:
+        """Backfill only a wholly absent legacy NarrativeEvent audit stream."""
+
+        count = 0
+        events = connection.execute(
+            "SELECT * FROM narrative_events ORDER BY created_at, event_id"
+        ).fetchall()
+        tables = set(self._table_names(connection))
+        for event in events:
+            event_id = str(event["event_id"])
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM event_ledger WHERE aggregate_type = 'narrative_event' "
+                "AND aggregate_id = ?", (event_id,)
+            ).fetchone()
+            if existing and int(existing[0]):
+                continue
+            evidence_rows = (
+                connection.execute(
+                    "SELECT * FROM event_evidence_refs WHERE event_id = ? "
+                    "ORDER BY snapshot_id, start_line, end_line, evidence_id",
+                    (event_id,),
+                ).fetchall()
+                if "event_evidence_refs" in tables
+                else []
+            )
+            evidence_refs = [
+                {
+                    "evidence_id": str(row["evidence_id"]),
+                    "snapshot_id": str(row["snapshot_id"]),
+                    "start_line": int(row["start_line"]),
+                    "end_line": int(row["end_line"]),
+                    "content_hash": row["content_hash"],
+                }
+                for row in evidence_rows
+            ]
+            self._append_ledger_in_transaction(
+                connection,
+                event_type="narrative_event.created",
+                aggregate_type="narrative_event",
+                aggregate_id=event_id,
+                payload={
+                    "persona_id": str(event["persona_id"]),
+                    "continuity": str(event["continuity"]),
+                    "event_type": str(event["event_type"]),
+                    "valid_from": event["valid_from"],
+                    "knowledge_from": event["knowledge_from"],
+                    "access_policy": str(event["access_policy"]),
+                    "evidence_ids": [item["evidence_id"] for item in evidence_refs],
+                    "evidence_refs": evidence_refs,
+                },
+                created_at=str(event["created_at"]),
+            )
+            count += 1
+        return count
 
     def _migrate_legacy_v1(
         self,
@@ -782,6 +1384,7 @@ class Storage:
             connection, legacy_rows, claim_id_map, snapshot_id_map, mapped
         )
         self._migrate_legacy_events(connection, legacy_rows, mapped)
+        authority_entries = self._backfill_claim_authority_ledger(connection)
 
         migrated_at = _now()
         row_total = 0
@@ -827,6 +1430,7 @@ class Storage:
                 "migrated_sources": len(source_id_map),
                 "migrated_snapshots": len(snapshot_id_map),
                 "migrated_claims": len(claim_id_map),
+                "authority_ledger_entries": authority_entries,
             },
             created_at=migrated_at,
         )
@@ -853,6 +1457,11 @@ class Storage:
             default=index,
         )
         return str(value)
+
+    def _legacy_is_quarantined(
+        self, table: str, row: Mapping[str, Any], index: int
+    ) -> bool:
+        return (table, self._legacy_key(row, index)) in self._quarantined_legacy
 
     @staticmethod
     def _stable_id(prefix: str, *parts: object) -> str:
@@ -984,6 +1593,8 @@ class Storage:
         )
 
         for table_name, index, row in candidates:
+            if self._legacy_is_quarantined(table_name, row, index):
+                continue
             old_snapshot_id = str(
                 self._first(row, "snapshot_id", "id", default=f"{table_name}:{index}")
             )
@@ -1092,6 +1703,8 @@ class Storage:
         result: dict[str, str] = {}
         for table_name in ("claims", "claim", "claim_proposals"):
             for index, row in enumerate(legacy_rows.get(table_name, [])):
+                if self._legacy_is_quarantined(table_name, row, index):
+                    continue
                 old_claim_id = str(
                     self._first(row, "claim_id", "id", default=f"{table_name}:{index}")
                 )
@@ -1314,6 +1927,8 @@ class Storage:
     ) -> None:
         for table_name in ("narrative_events", "events"):
             for index, row in enumerate(legacy_rows.get(table_name, [])):
+                if self._legacy_is_quarantined(table_name, row, index):
+                    continue
                 event_id = str(
                     self._first(row, "event_id", "id", default=f"{table_name}:{index}")
                 )
@@ -1359,6 +1974,26 @@ class Storage:
                         self._legacy_access(self._first(row, "access_policy", "access")).value,
                         timestamp,
                     ),
+                )
+                persisted = connection.execute(
+                    "SELECT * FROM narrative_events WHERE event_id = ?", (event_id,)
+                ).fetchone()
+                self._append_ledger_in_transaction(
+                    connection,
+                    event_type="narrative_event.created",
+                    aggregate_type="narrative_event",
+                    aggregate_id=event_id,
+                    payload={
+                        "persona_id": str(persisted["persona_id"]),
+                        "continuity": str(persisted["continuity"]),
+                        "event_type": str(persisted["event_type"]),
+                        "valid_from": persisted["valid_from"],
+                        "knowledge_from": persisted["knowledge_from"],
+                        "access_policy": str(persisted["access_policy"]),
+                        "evidence_ids": [],
+                        "evidence_refs": [],
+                    },
+                    created_at=timestamp,
                 )
                 mapped[(table_name, index)] = ("narrative_event", event_id)
 
@@ -1713,10 +2348,18 @@ class Storage:
         timestamp = _now()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT continuity FROM claim_proposals WHERE claim_id = ?", (claim_id,)
+                "SELECT continuity, status FROM claim_proposals WHERE claim_id = ?", (claim_id,)
             ).fetchone()
             if row is None:
                 raise NotFoundError(f"claim not found: {claim_id}")
+            current = GovernanceStatus(row["status"])
+            if current not in {
+                GovernanceStatus.PROPOSED,
+                GovernanceStatus.DISPUTED,
+            }:
+                raise InvalidTransitionError(
+                    "claim evidence can be appended only while PROPOSED or DISPUTED"
+                )
             stored = self._insert_evidence_ref(
                 connection, claim_id, str(row["continuity"]), evidence, timestamp
             )
@@ -1755,8 +2398,9 @@ class Storage:
                 "claim evidence belongs to a different continuity: "
                 f"{snapshot['continuity']} != {claim_continuity}"
             )
-        start_line = int(evidence.start_line)
-        end_line = int(evidence.end_line)
+        start_line, end_line = validate_line_range_types(
+            evidence.start_line, evidence.end_line
+        )
         line_count = int(snapshot["line_count"])
         if start_line < 1 or end_line < start_line or end_line > line_count:
             raise ValueError(
@@ -1909,6 +2553,15 @@ class Storage:
         ).fetchall()
         return [self._row_to_evidence(row) for row in rows]
 
+    def list_all_claim_evidence(self) -> list[EvidenceRef]:
+        """Bulk-load claim evidence for authority replay in one query."""
+
+        rows = self.connection.execute(
+            "SELECT * FROM evidence_refs "
+            "ORDER BY claim_id, snapshot_id, start_line, end_line, evidence_id"
+        ).fetchall()
+        return [self._row_to_evidence(row) for row in rows]
+
     def record_governance_decision(
         self,
         claim_id: str,
@@ -1916,7 +2569,31 @@ class Storage:
         reviewer: str,
         reason: str,
     ) -> GovernanceDecision:
-        """Advance a claim through an explicit, immutable, audited decision."""
+        """Review through the safe governance façade.
+
+        The public v0.2 spelling remains source-compatible, but it no longer
+        bypasses evidence validation or conflict detection.  The governance
+        service calls :meth:`_commit_governance_decision` only after those
+        deterministic gates pass.
+        """
+
+        from .governance import ClaimGovernance
+
+        return ClaimGovernance(self).review(
+            claim_id,
+            status,
+            reviewer=reviewer,
+            reason=reason,
+        )
+
+    def _commit_governance_decision(
+        self,
+        claim_id: str,
+        status: GovernanceStatus | str,
+        reviewer: str,
+        reason: str,
+    ) -> GovernanceDecision:
+        """Atomically persist a decision after ``ClaimGovernance`` gates it."""
 
         target = GovernanceStatus(status)
         reviewer = _nonempty(reviewer, name="reviewer")
@@ -1984,9 +2661,9 @@ class Storage:
         if claim_id is not None:
             sql += " WHERE claim_id = ?"
             params.append(claim_id)
-        # ``decided_at`` has second precision; rowid preserves multiple
-        # decisions made within the same second in their append order.
-        sql += " ORDER BY decided_at, rowid"
+        # Immutable insertion order mirrors EventLedger order. ``decided_at``
+        # is metadata and may move backward when the system clock changes.
+        sql += " ORDER BY rowid"
         rows = self.connection.execute(sql, params).fetchall()
         return [
             GovernanceDecision(
@@ -2070,6 +2747,7 @@ class Storage:
         validate_interval(
             event.knowledge_from, event.knowledge_to, name="knowledge interval"
         )
+        validated_details, details_json = _strict_json_object(event.details)
         timestamp = _normal_time(event.created_at) or _now()
         persisted = replace(
             event,
@@ -2082,9 +2760,12 @@ class Storage:
             knowledge_from=_normal_time(event.knowledge_from),
             knowledge_to=_normal_time(event.knowledge_to),
             access_policy=AccessPolicy(event.access_policy),
+            details=validated_details,
             created_at=timestamp,
         )
         evidence_items = list(evidence_refs)
+        if not evidence_items:
+            raise ValueError("narrative events require at least one evidence reference")
         with self.transaction() as connection:
             connection.execute(
                 "INSERT INTO narrative_events "
@@ -2098,7 +2779,7 @@ class Storage:
                     persisted.event_type,
                     persisted.title,
                     persisted.summary,
-                    _canonical_json(dict(persisted.details)),
+                    details_json,
                     persisted.valid_from,
                     persisted.valid_to,
                     persisted.knowledge_from,
@@ -2165,8 +2846,9 @@ class Storage:
                 "event evidence belongs to a different continuity: "
                 f"{snapshot['continuity']} != {event_continuity}"
             )
-        start_line = int(evidence.start_line)
-        end_line = int(evidence.end_line)
+        start_line, end_line = validate_line_range_types(
+            evidence.start_line, evidence.end_line
+        )
         line_count = int(snapshot["line_count"])
         if start_line < 1 or end_line < start_line or end_line > line_count:
             raise ValueError(
@@ -2251,6 +2933,30 @@ class Storage:
             "SELECT * FROM event_evidence_refs WHERE event_id = ? "
             "ORDER BY snapshot_id, start_line, end_line, evidence_id",
             (event_id,),
+        ).fetchall()
+        return [
+            EvidenceRef(
+                snapshot_id=str(row["snapshot_id"]),
+                start_line=int(row["start_line"]),
+                end_line=int(row["end_line"]),
+                quote=row["quote"],
+                evidence_id=str(row["evidence_id"]),
+                claim_id=None,
+                event_id=str(row["event_id"]),
+                start_char=row["start_char"],
+                end_char=row["end_char"],
+                content_hash=row["content_hash"],
+                created_at=str(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    def list_all_event_evidence(self) -> list[EvidenceRef]:
+        """Bulk-load event evidence for audit replay in one query."""
+
+        rows = self.connection.execute(
+            "SELECT * FROM event_evidence_refs "
+            "ORDER BY event_id, snapshot_id, start_line, end_line, evidence_id"
         ).fetchall()
         return [
             EvidenceRef(

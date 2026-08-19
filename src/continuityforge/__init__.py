@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0a1"
 
 # Imports are deliberately small so ``import continuityforge`` never opens a
 # database and remains safe for tooling that only needs version metadata.
 
 __all__ = ["__version__"]
-

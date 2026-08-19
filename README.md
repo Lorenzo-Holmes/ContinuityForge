@@ -2,83 +2,106 @@
 
 **Compile source texts into provenance-aware, timeline-safe memory packs for long-lived AI personas.**
 
-ContinuityForge sits *above* memory stores and RAG systems. It turns source material—novels, scripts, lore, transcripts, subtitles, and structured notes—into governed claims that remain traceable to exact source lines, isolated by continuity, and filtered by what a persona could know at a given `MemoryCutoff`.
+ContinuityForge is a local, dependency-light compiler above RAG and memory stores. It turns novels, scripts, lore, transcripts, subtitles, and structured notes into governed claims whose source lines, continuity, persona scope, access policy, and knowledge time remain inspectable.
 
-> 中文简介：ContinuityForge 将小说、剧本、设定与聊天记录编译成可追溯原文、隔离世界线、受角色知晓时间约束的 AI 人格记忆包。它是 AI memory systems 上游的来源治理与编译层，而不是聊天前端或向量数据库。
+> 中文简介：ContinuityForge 将小说、剧本、设定与记录编译成可追溯原文、隔离世界线、受角色知晓时间约束的 AI 人格记忆包。它是记忆系统上游的来源治理与编译层，不是聊天前端或向量数据库。
 
-## Why this exists
+## Status
 
-Long-lived personas fail in ways that similarity search alone does not solve:
+- **v0.1:** frozen observable compatibility baseline.
+- **v0.2.0:** current released CLI, SQLite, governance, ledger, and Memory Pack workflow.
+- **v0.3.0a1:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
 
-- a retrieved statement has no inspectable source;
-- facts from alternate continuities leak into one another;
-- a character knows something before learning it;
-- human-only notes reach an agent prompt;
-- a model-generated interpretation becomes “canon” without review;
-- edited source material silently changes the meaning of old citations.
+The v0.1 and v0.2 contracts remain intact while v0.3 is developed. Alpha commands are executable in the development tree but are not a stable release contract yet.
 
-ContinuityForge treats those as data-integrity problems. Its v0.2 pipeline makes source versions immutable, validates line-level evidence, keeps LLM output at proposal authority, records governance decisions, and emits only claims allowed by the requested persona, continuity, access policy, and cutoff.
+## What ContinuityForge guarantees
 
-## Current status: v0.2
+Released v0.2 behavior provides:
 
-The v0.1 baseline is a frozen behavioral contract, not disposable scaffolding. v0.2 adds capabilities without silently weakening the original guarantees.
+- immutable, SHA-256-addressed `SourceSnapshot` revisions;
+- 1-based, inclusive, exact-line evidence spans;
+- exact persona and continuity isolation;
+- separate world-validity and persona-knowledge intervals;
+- explicit `MemoryCutoff` compilation;
+- fail-closed `agent_accessible`, `human_only`, and `hidden` access handling;
+- an LLM-proposes-only boundary—model confidence never grants authority;
+- explicit `AUTHORIZED`, `REJECTED`, and `DISPUTED` governance decisions;
+- an append-only, hash-linked EventLedger;
+- JSON Memory Packs retaining claim and evidence provenance;
+- zero third-party runtime dependencies.
 
-| Guarantee | v0.1 baseline | v0.2 |
-|---|:---:|:---:|
-| TXT / Markdown / JSON / SRT ingestion | ✓ | ✓ |
-| SHA-256 source identity and exact line spans | ✓ | ✓ |
-| Persona and continuity isolation | ✓ | ✓ |
-| Valid-time and knowledge-time filtering | ✓ | ✓ |
-| `MemoryCutoff` compilation | ✓ | ✓ |
-| `agent_accessible` / `human_only` / `hidden` access | ✓ | ✓ |
-| SQLite persistence and CLI workflow | ✓ | ✓ |
-| Immutable, ordered `SourceSnapshot` versions |  | ✓ |
-| Evidence quote/hash verification |  | ✓ |
-| LLM-proposes-only trust boundary |  | ✓ |
-| `AUTHORIZED` / `REJECTED` / `DISPUTED` governance |  | ✓ |
-| Append-only, hash-linked `EventLedger` |  | ✓ |
+Implemented, unreleased v0.3.0a1 work strengthens those guarantees with:
 
-See [the v0.1 baseline contract](docs/V0_1_BASELINE.md) and [the v0.2 design](docs/V0_2_DESIGN.md).
+- strict built-in-integer evidence coordinates;
+- bounded, control-aware source ingestion;
+- strict, bounded JSON for operator-authored event details;
+- claim authority-chain and narrative-event audit replay before compilation;
+- one pinned SQLite read snapshot for each Memory Pack compilation;
+- deterministic, exact SourceSnapshot impact classification;
+- bounded, hash-bound, storage-aware impact inspection with ledger and claim-authority replay;
+- strict schema recognition and read-only migration preflight;
+- transactional, schema-fingerprinted, backup-gated v0.1/v0.2 to v0.3 migration;
+- functional v0.1 quarantine that preserves bad rows without mapping them into active authority.
 
-## How it works
+The alpha currently passes the complete regression suite, but its new CLI/report schemas can still change before release. See [Migration v3](docs/MIGRATION_V3.md) and [Snapshot Impact](docs/SNAPSHOT_IMPACT.md).
+
+## What ContinuityForge does not guarantee
+
+ContinuityForge does **not**:
+
+- decide whether a narrative assertion is true merely because text is similar;
+- grant authority to LLM output, model confidence, or a provider name;
+- protect against an operating-system user who can replace the entire SQLite database;
+- provide a signed external checkpoint, encrypted database, or encrypted backup;
+- provide a one-command restore or deployment activation mechanism;
+- infer that two arbitrary snapshots share source/continuity lineage in the two-argument Impact API;
+- create `NarrativeEvent` values from model output;
+- automatically move an affected `AUTHORIZED` claim to `DISPUTED`;
+- perform fuzzy, semantic, case-folded, whitespace-folded, or Unicode-normalized impact matching;
+- expose an HTTP, MCP, OpenAI-compatible, or hosted multi-user service.
+
+## Trust boundary
+
+The operating-system account and SQLite file owner are trusted. ContinuityForge defends against malformed source input, untrusted model proposals, ordinary integration mistakes, and application defects. An attacker who can replace both the database and its internal ledger is outside the v0.3 trust boundary; detecting that requires an external signed checkpoint.
+
+`NarrativeEvent` is **operator-only**. Models must produce `ClaimProposal` values, which pass evidence validation and governance review. There is no implicit EventProposal lifecycle.
+
+Snapshot impact is **report-only**. A new source version can produce an impact report, but only an explicit reviewer action may change a claim to `DISPUTED`.
+
+### Source-body disclosure
+
+v0.3.0a1 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
+
+## Architecture at a glance
 
 ```mermaid
 flowchart LR
-    A["TXT / Markdown / JSON / SRT"] --> B["Logical Source"]
-    B --> C["Immutable SourceSnapshot v1..n"]
-    C --> D["Line-addressed EvidenceRef"]
-    D --> E["Claim proposal"]
-    E --> F["Deterministic evidence validation"]
-    F --> G{"Governance review"}
-    G -->|AUTHORIZED| H["Eligible claim"]
-    G -->|REJECTED| I["Excluded with reason"]
-    G -->|DISPUTED| J["Quarantined for resolution"]
-    H --> K["Persona + continuity + access + time filters"]
-    K --> L["Memory Pack at MemoryCutoff"]
-    B -.-> M["Hash-linked EventLedger"]
-    E -.-> M
-    G -.-> M
+    A["TXT / Markdown / JSON / SRT"] --> B["Immutable SourceSnapshot versions"]
+    B --> C["EvidenceRef validation"]
+    C --> D["ClaimProposal"]
+    D --> E["Governance decision"]
+    E --> F["Authority-chain verification"]
+    F --> G["Persona / continuity / access / time filters"]
+    G --> H["JSON Memory Pack"]
+    B --> I["Deterministic impact report"]
+    I --> J["Human review queue"]
+    J -. "explicit decision only" .-> E
+    B -.-> K["EventLedger"]
+    D -.-> K
+    E -.-> K
 ```
 
-The key trust boundary is deliberate:
+Read [Architecture](docs/ARCHITECTURE.md), [Data Model](docs/DATA_MODEL.md), and [Threat Model](docs/THREAT_MODEL.md) for the full boundaries.
 
-```text
-LLM output -> proposal -> evidence validation -> governance -> compilation
-                                      ^
-                         never direct canon writes
-```
+## Quick start: released v0.2 CLI
 
-## Quick start
-
-Requirements: Python 3.10 or newer. Runtime dependencies: none outside the Python standard library.
+Requirements: Python 3.10 or newer.
 
 ```bash
 python -m venv .venv
 python -m pip install -e .
 continuityforge demo --output-dir demo-output --reset
 ```
-
-The demo creates an isolated SQLite database, ingests synthetic Alpha/Beta sources, exercises governed claim creation and ledger verification, and writes a cutoff-specific memory pack under `demo-output/`.
 
 Run the regression suite:
 
@@ -87,17 +110,15 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-## End-to-end CLI workflow
-
-All commands accept a shared SQLite database through `--db`:
+### End-to-end governed claim
 
 ```bash
-# 1. Ingest an immutable snapshot in one continuity.
+# 1. Import one immutable source version.
 continuityforge --db forge.db ingest examples/alpha.txt \
   --continuity alpha \
-  --source-key north-pier-log
+  --source-key alpha-field-log
 
-# 2. Submit a claim proposal. SNAPSHOT_ID is printed by ingest.
+# 2. Submit a non-authoritative proposal. Replace SNAPSHOT_ID with ingest output.
 continuityforge --db forge.db claim-propose \
   --persona mira \
   --continuity alpha \
@@ -110,17 +131,15 @@ continuityforge --db forge.db claim-propose \
   --provider local \
   --model example-model
 
-# 3. Review the validated proposal. CLAIM_ID is printed by claim-propose.
+# 3. Replace CLAIM_ID with proposal output, then record human review.
 continuityforge --db forge.db claim-review CLAIM_ID \
   --status authorized \
   --reviewer maintainer \
   --reason "Line 4 directly supports the claim."
 
-# 4. Validate all stored invariants and the ledger chain.
+# 4. Validate and compile at an explicit knowledge cutoff.
 continuityforge --db forge.db validate
 continuityforge --db forge.db ledger-verify
-
-# 5. Compile only memories Mira may access and know at the cutoff.
 continuityforge --db forge.db compile \
   --persona mira \
   --continuity alpha \
@@ -128,88 +147,107 @@ continuityforge --db forge.db compile \
   -o memory-pack.alpha.2026-01-02.json
 ```
 
-The January 2 pack can include the line-4 locker fact, but it must exclude the archive code learned on January 3 and every Beta-continuity claim.
+`--cutoff` filters knowledge time. Valid-time filtering is independent and activates only when `--valid-at` is supplied.
 
-### Evidence coordinates
+## Released v0.2 command map
 
-`--evidence SNAPSHOT_ID:START_LINE:END_LINE` is repeatable. Lines are **1-based** and the end line is **inclusive**. A stored evidence reference contains:
-
-```json
-{
-  "snapshot_id": "SNAPSHOT_ID",
-  "start_line": 4,
-  "end_line": 4,
-  "quote": "At sunset, Rowan sealed the compass inside Locker Seven.",
-  "content_hash": "SHA256_OF_NORMALIZED_QUOTE"
-}
-```
-
-Multi-line evidence is normalized with `\n` between source lines before hashing. Validation fails if the snapshot is missing, the range is invalid, the continuities differ, or a supplied quote/hash no longer matches the immutable snapshot.
-
-## Command map
-
-| Command | Purpose |
+| Command | Released purpose |
 |---|---|
 | `ingest` | Import `.txt`, `.md`, `.markdown`, `.json`, or `.srt` as an immutable source version. |
 | `source-list` | List logical sources, optionally scoped to one continuity. |
-| `claim-propose` | Store a model or tool suggestion as a non-authoritative claim proposal. |
-| `claim-review` | Record an `authorized`, `rejected`, or `disputed` governance decision and reason. |
-| `claim-add` | Compatibility path for a human-authored claim; validate evidence and authorize it atomically. |
-| `claim-list` | Inspect proposals, optionally filtered by scope or governance status. |
-| `event-add` | Append a source-backed narrative event without mutating prior history. |
-| `validate` | Check source, evidence, continuity, temporal, governance, and conflict invariants; add `--json` or `--strict-proposals`. |
-| `compile` | Emit a JSON Memory Pack for one persona, continuity, and `MemoryCutoff`; optionally set `--valid-at`. |
-| `ledger-verify` | Recompute the append-only ledger chain and report tampering or corruption. |
-| `ledger-show` | Print ordered ledger entries for inspection. |
-| `demo` | Run the bundled Alpha/Beta isolation and future-knowledge scenario; `--reset` recreates its database. |
+| `claim-propose` | Store model or tool output as `PROPOSED`; never authorize it. |
+| `claim-review` | Record an explicit `authorized`, `rejected`, or `disputed` decision. |
+| `claim-add` | Compatibility path for an evidence-backed human claim. |
+| `claim-list` | Inspect claim proposals by scope or status. |
+| `event-add` | Add an evidence-backed, human/operator-supplied narrative event. |
+| `validate` | Check source, evidence, temporal, governance, conflict, and ledger invariants. |
+| `compile` | Emit a scoped JSON Memory Pack at a knowledge cutoff. |
+| `ledger-verify` | Recompute and verify the EventLedger hash chain. |
+| `ledger-show` | Print ordered ledger metadata. |
+| `demo` | Run the synthetic Alpha/Beta isolation and future-knowledge scenario. |
 
-Use `continuityforge COMMAND --help` for the complete option list.
+Use `continuityforge COMMAND --help` for released options.
 
-`event-add` creates a human/operator-supplied, evidence-linked narrative event; `EventLedger` is the separate audit hash chain that records mutations. Model-extracted assertions should use `claim-propose`, not `event-add`, so they pass through evidence and governance.
+## v0.3.0a1 preview CLI—implemented, unreleased
 
-## Source versioning
+These commands are executable in the development tree. Their current flags are tested, but the commands and JSON report schemas remain pre-release interfaces.
 
-`source_key + continuity` identifies a logical source. Ingestion never overwrites bytes:
+| Alpha command | Contract |
+|---|---|
+| `source-impact` | Open an existing database read-only and emit a `continuityforge.source-impact/v0.3-alpha` metadata-only summary for claim/event evidence; no governance mutation. |
+| `migration-check` | Inspect an existing database without creating a database, backup, schema object, or write transaction. |
+| `migrate` | Require an existing database, create and verify a consistent backup, then run a transactional v0.1/v0.2 to v0.3 migration. |
 
-- re-importing the current content is idempotent;
-- changed content creates the next immutable `SourceSnapshot` version;
-- each snapshot retains its own SHA-256 content identity and line count;
-- evidence remains anchored to the exact historical snapshot it cited;
-- “latest source” and “valid evidence” are separate questions.
+```bash
+# Compare v1 evidence with v2, or omit --target-version for latest.
+continuityforge --db project.db source-impact \
+  --source-key north-pier-field-log \
+  --continuity alpha \
+  --from-version 1 \
+  --target-version 2
 
-This lets maintainers add revised canon without rewriting history or invalidating the audit trail silently.
+# Strict, read-only eligibility check. This command never creates a backup.
+continuityforge --db project.db migration-check --mode strict
 
-## Governance semantics
+# Explicit write operation. This refuses a missing database and is backup-gated.
+continuityforge --db project.db migrate --mode strict
+```
 
-An LLM may extract, summarize, and propose. It does not grant authority.
+`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a1; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
 
-| Status | Compiler behavior | Meaning |
-|---|---|---|
-| `AUTHORIZED` | Eligible after all other filters pass | Evidence and policy review allow use as persona memory. |
-| `REJECTED` | Excluded | The proposal is unsupported, malformed, out of scope, or intentionally declined. |
-| `DISPUTED` | Excluded | Competing evidence or interpretation needs explicit resolution. |
+## Deterministic Impact API
 
-A review records the reviewer, reason, timestamp, and ledger event. Status is not inferred from model confidence.
+The v0.3.0a1 pure-domain Impact engine is available to library callers in the development tree:
 
-## Memory Pack selection
+```python
+from continuityforge.impact import analyze_evidence_impact
 
-Compilation is fail-closed. A claim is emitted only when all required conditions hold:
+report = analyze_evidence_impact(old_evidence, resolved_target_snapshot)
+print(report.outcome.value)
+print(report.candidate_spans)
+```
 
-1. governance status is `AUTHORIZED`;
-2. every required evidence reference is valid;
-3. `persona_id` and `continuity` exactly match the compile request;
-4. the persona's knowledge-time interval includes the `MemoryCutoff`;
-5. when `--valid-at` is supplied, that instant is within the claim's valid-time interval;
-6. access is `agent_accessible`;
-7. no unresolved validation error makes the claim ineligible.
+Outcomes are `SAME_POSITION`, `EXACT_MOVED_UNIQUE`, `EXACT_MOVED_AMBIGUOUS`, `NO_EXACT_MATCH`, and `INVALID_EVIDENCE`. The engine normalizes line separators only, preserves all semantic whitespace, returns candidates in stable source order, and does not access SQLite or change governance. The caller must establish source and continuity lineage first.
 
-The JSON output retains claim IDs and source spans so downstream memory systems can display or audit provenance instead of receiving opaque text.
+See [Snapshot Impact](docs/SNAPSHOT_IMPACT.md).
 
-## Using ContinuityForge with an LLM
+## North Pier revision demo
 
-Keep generation outside the trusted core. Ask a model to return structured proposals compatible with [examples/proposals.json](examples/proposals.json), then submit each proposal through `claim-propose`. The deterministic validator and governance layer—not the model—decide whether a proposal can become eligible memory.
+The fully original [North Pier demo](examples/north_pier/README.md) contains v1/v2 source fixtures and expected deterministic outcomes for unchanged, uniquely moved, ambiguously repeated, and edited evidence.
 
-ContinuityForge intentionally has no runtime SDK dependency on a model provider. OpenAI, local models, batch extractors, or hand-written tools can all produce proposals.
+```bash
+python examples/north_pier/run_demo.py --output-dir demo-output/north-pier --reset
+```
+
+The package-API script creates three authorized claim anchors plus one operator-event anchor, imports both revisions, verifies all four non-error impact outcomes, and writes a metadata-only JSON report.
+
+Released ingestion can import both versions today:
+
+```bash
+continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v1.txt \
+  --continuity alpha --source-key north-pier-field-log
+continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt \
+  --continuity alpha --source-key north-pier-field-log
+```
+
+The v0.3.0a1 development tree can inspect the imported revisions with the `source-impact` syntax above. The report is metadata-only and remains an unreleased alpha schema. Demo data licensing is documented in [Demo Licenses](docs/DEMO_LICENSES.md).
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [v0.1 baseline](docs/V0_1_BASELINE.md) | Frozen observable compatibility contract. |
+| [v0.2 design](docs/V0_2_DESIGN.md) | Versioned sources, evidence, governance, ledger, and compiler design. |
+| [v0.3 decisions](docs/V0_3_DECISIONS.md) | Accepted owner trust and product boundaries. |
+| [Architecture](docs/ARCHITECTURE.md) | Components, flows, and dependency rules. |
+| [Data Model](docs/DATA_MODEL.md) | Entities, scopes, time, access, and report shapes. |
+| [Threat Model](docs/THREAT_MODEL.md) | Assets, attackers, mitigations, and residual risks. |
+| [Deterministic vs LLM](docs/DETERMINISTIC_VS_LLM.md) | Which decisions may use a model and which may not. |
+| [Snapshot Impact](docs/SNAPSHOT_IMPACT.md) | Exact matching semantics and review workflow. |
+| [Migration v3](docs/MIGRATION_V3.md) | Strict migration contract and status. |
+| [Backup and Restore](docs/BACKUP_AND_RESTORE.md) | Consistent backup and restoration requirements. |
+| [Security Testing](docs/SECURITY_TESTING.md) | Adversarial test matrix and commands. |
+| [Demo Licenses](docs/DEMO_LICENSES.md) | Provenance and licensing for bundled fixtures. |
 
 ## Development
 
@@ -219,22 +257,10 @@ python -m pytest
 continuityforge demo --output-dir demo-output --reset
 ```
 
-Compatibility rule: a change that weakens a documented v0.1 guarantee must include an explicit versioned migration, regression-test update, and release note. It must never arrive as an unannounced behavior change.
+The semantic contract, legacy schema fixture, and v0.1 baseline document are SHA-256 locked. Never update that lock to hide an accidental change. Any intentional compatibility change requires an explicit versioned migration, contract update, release note, and review.
 
-The semantic contract, legacy schema fixture, and baseline document are SHA-256 locked by `tests/baseline/v01_baseline.lock.json`; CI fails if they change without an explicit lock update visible in review.
-
-## Project layout
-
-```text
-ContinuityForge/
-├── src/continuityforge/    # models, storage, validation, compiler, CLI
-├── tests/baseline/         # frozen v0.1 behavioral contract
-├── tests/v02/              # v0.2 feature and governance tests
-├── examples/               # original Alpha/Beta fixtures and proposals
-├── docs/V0_1_BASELINE.md   # compatibility contract
-└── docs/V0_2_DESIGN.md     # architecture and invariants
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-[MIT](LICENSE)
+Code and repository documentation are licensed under [MIT](LICENSE). The original North Pier demo fixtures are dedicated under CC0-1.0; see [LICENSES/NORTH_PIER_DEMO.md](LICENSES/NORTH_PIER_DEMO.md).

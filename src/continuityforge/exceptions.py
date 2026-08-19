@@ -20,6 +20,18 @@ class SchemaError(ContinuityForgeError):
     """The database schema is unsupported or cannot be migrated safely."""
 
 
+class MigrationError(SchemaError):
+    """A schema migration failed its fail-closed gate."""
+
+    def __init__(self, message: str, *, report: object | None = None) -> None:
+        super().__init__(message)
+        self.report = report
+
+
+class ReadOnlyStorageError(SchemaError):
+    """A mutation was requested through a SQLite ``mode=ro`` repository."""
+
+
 class ContinuityViolation(ContinuityForgeError):
     """Data from different continuities would be combined."""
 
@@ -47,3 +59,20 @@ class GovernanceConflictError(ContinuityForgeError):
 class LedgerIntegrityError(ContinuityForgeError):
     """The append-only EventLedger hash chain is invalid."""
 
+
+class InspectionError(ContinuityForgeError):
+    """A read-only impact inspection failed a deterministic safety gate."""
+
+    def __init__(self, code: str, message: str) -> None:
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("inspection error code must be non-empty")
+        self.code = code.strip()
+        super().__init__(message)
+
+
+class InspectionLimitError(InspectionError):
+    """Inspection input or output would exceed a documented resource bound."""
+
+
+class InspectionIntegrityError(InspectionError):
+    """Stored inspection data failed a content, authority, or metadata check."""

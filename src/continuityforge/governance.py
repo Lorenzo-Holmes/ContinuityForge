@@ -18,6 +18,7 @@ from .exceptions import (
     GovernanceConflictError,
     InvalidTransitionError,
 )
+from .governance_integrity import ALLOWED_GOVERNANCE_TRANSITIONS
 from .models import (
     AccessPolicy,
     ClaimProposal,
@@ -48,6 +49,14 @@ class GovernanceStorage(Protocol):
     ) -> list[ClaimProposal]: ...
 
     def record_governance_decision(
+        self,
+        claim_id: str,
+        status: GovernanceStatus,
+        reviewer: str,
+        reason: str,
+    ) -> GovernanceDecision: ...
+
+    def _commit_governance_decision(
         self,
         claim_id: str,
         status: GovernanceStatus,
@@ -109,23 +118,7 @@ def claims_contradict(left: ClaimProposal, right: ClaimProposal) -> bool:
 class ClaimGovernance:
     """Orchestrate proposals, deterministic review, and immutable decisions."""
 
-    _TRANSITIONS: dict[GovernanceStatus, frozenset[GovernanceStatus]] = {
-        GovernanceStatus.PROPOSED: frozenset(
-            {
-                GovernanceStatus.AUTHORIZED,
-                GovernanceStatus.REJECTED,
-                GovernanceStatus.DISPUTED,
-            }
-        ),
-        GovernanceStatus.DISPUTED: frozenset(
-            {GovernanceStatus.AUTHORIZED, GovernanceStatus.REJECTED}
-        ),
-        # New source versions may invalidate a formerly authorized claim, and
-        # an appeal may reopen a rejected proposal. Both moves are explicit,
-        # reasoned DISPUTED decisions preserved by EventLedger.
-        GovernanceStatus.AUTHORIZED: frozenset({GovernanceStatus.DISPUTED}),
-        GovernanceStatus.REJECTED: frozenset({GovernanceStatus.DISPUTED}),
-    }
+    _TRANSITIONS = ALLOWED_GOVERNANCE_TRANSITIONS
 
     def __init__(self, storage: GovernanceStorage) -> None:
         self.storage = storage
@@ -259,9 +252,14 @@ class ClaimGovernance:
                         conflicting_ids=ids,
                     )
 
-            return self.storage.record_governance_decision(
-                claim_id, target, reviewer, reason
-            )
+            # v0.3 repositories expose a private commit primitive so the
+            # public decision API cannot bypass evidence and conflict gates.
+            # The fallback preserves compatibility with small v0.2 embedding
+            # stores while their adapters move to the safer protocol.
+            commit = getattr(self.storage, "_commit_governance_decision", None)
+            if not callable(commit):
+                commit = self.storage.record_governance_decision
+            return commit(claim_id, target, reviewer, reason)
 
     def add_authorized_human_claim(
         self,

@@ -118,14 +118,22 @@ def _json_safe(value: Any) -> Any:
     return repr(value)
 
 
-def _coerce_line(value: object) -> int | None:
-    """Return a real integer line number, rejecting booleans and strings."""
+def validate_line_range_types(
+    start_line: object, end_line: object
+) -> tuple[int, int]:
+    """Return line coordinates only when both are built-in integers.
 
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    return None
+    SQLite and Python both coerce booleans and numeric strings to integers.  This
+    shared gate is intentionally stricter and is suitable for calling immediately
+    before persistence as well as from evidence construction and validation.
+    """
+
+    if type(start_line) is not int or type(end_line) is not int:
+        raise TypeError(
+            "start_line and end_line must be built-in integers; "
+            "booleans and strings are not accepted"
+        )
+    return start_line, end_line
 
 
 def _normalize_quote(value: str) -> str:
@@ -235,6 +243,23 @@ class EvidenceValidator:
             ]
         snapshot_id = snapshot_id.strip()
 
+        raw_start = _value(evidence, "start_line", "line_start")
+        raw_end = _value(evidence, "end_line", "line_end")
+        try:
+            start_line, end_line = validate_line_range_types(raw_start, raw_end)
+        except TypeError:
+            return [
+                ValidationIssue(
+                    code="INVALID_LINE_RANGE",
+                    message="start_line and end_line must be built-in integers",
+                    evidence_index=index,
+                    snapshot_id=snapshot_id,
+                    field="line_range",
+                    expected="built-in integer line numbers",
+                    actual={"start_line": raw_start, "end_line": raw_end},
+                )
+            ]
+
         try:
             snapshot = self.storage.get_snapshot(snapshot_id)
         except (NotFoundError, KeyError, LookupError):
@@ -301,24 +326,6 @@ class EvidenceValidator:
                     actual=snapshot_continuity,
                 )
             )
-
-        raw_start = _value(evidence, "start_line", "line_start")
-        raw_end = _value(evidence, "end_line", "line_end")
-        start_line = _coerce_line(raw_start)
-        end_line = _coerce_line(raw_end)
-        if start_line is None or end_line is None:
-            issues.append(
-                ValidationIssue(
-                    code="INVALID_LINE_RANGE",
-                    message="start_line and end_line must be integers",
-                    evidence_index=index,
-                    snapshot_id=snapshot_id,
-                    field="line_range",
-                    expected="integer line numbers",
-                    actual={"start_line": raw_start, "end_line": raw_end},
-                )
-            )
-            return issues
 
         line_count = len(source_lines(content))
         stored_line_count = _value(snapshot, "line_count")
@@ -443,6 +450,23 @@ def build_evidence_ref(
     """Build a checked evidence reference from an immutable snapshot line span."""
 
     try:
+        parsed_start, parsed_end = validate_line_range_types(start_line, end_line)
+    except TypeError as exc:
+        report = ValidationReport(
+            [
+                ValidationIssue(
+                    code="INVALID_LINE_RANGE",
+                    message=str(exc),
+                    snapshot_id=snapshot_id,
+                    field="line_range",
+                    expected="built-in integer line numbers",
+                    actual={"start_line": start_line, "end_line": end_line},
+                )
+            ]
+        )
+        raise EvidenceValidationError(report.issues[0].message, report=report) from exc
+
+    try:
         snapshot = storage.get_snapshot(snapshot_id)
     except (NotFoundError, KeyError, LookupError) as exc:
         snapshot = None
@@ -480,15 +504,10 @@ def build_evidence_ref(
         )
         raise EvidenceValidationError(report.issues[0].message, report=report)
 
-    parsed_start = _coerce_line(start_line)
-    parsed_end = _coerce_line(end_line)
     line_count = len(source_lines(content))
     range_code: str | None = None
     range_message: str | None = None
-    if parsed_start is None or parsed_end is None:
-        range_code = "INVALID_LINE_RANGE"
-        range_message = "start_line and end_line must be integers"
-    elif parsed_start < 1 or parsed_end < parsed_start:
+    if parsed_start < 1 or parsed_end < parsed_start:
         range_code = "INVALID_LINE_RANGE"
         range_message = "expected 1 <= start_line <= end_line"
     elif parsed_end > line_count:
@@ -512,7 +531,6 @@ def build_evidence_ref(
         )
         raise EvidenceValidationError(report.issues[0].message, report=report)
 
-    assert parsed_start is not None and parsed_end is not None
     quote = extract_line_quote(content, parsed_start, parsed_end)
 
     # Delayed import keeps ingestion and validation usable by schema tooling while
@@ -535,4 +553,5 @@ __all__ = [
     "ValidationReport",
     "build_evidence_ref",
     "quote_sha256",
+    "validate_line_range_types",
 ]

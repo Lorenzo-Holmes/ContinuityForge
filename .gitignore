@@ -5,11 +5,15 @@ __pycache__/
 
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tmp-demo/
 .continuityforge/
 
 .venv/
+.venv-ci/
+.venv-*/
+.wheel-smoke*/
 venv/
 env/
 
@@ -25,5 +29,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.db
+*.bak
 memory-pack*.json
 demo-output/
