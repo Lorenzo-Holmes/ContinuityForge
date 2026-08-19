@@ -7,7 +7,7 @@ North Pier is an original two-version narrative fixture for deterministic Source
 | File | Purpose |
 |---|---|
 | [`north_pier_v1.txt`](north_pier_v1.txt) | Original ten-line field log. |
-| [`north_pier_v2.txt`](north_pier_v2.txt) | Revised log with one insertion, one edited fact, and one duplicated maintenance note. |
+| [`north_pier_v2.txt`](north_pier_v2.txt) | Revised log with one insertion, one author-edited fixture fact, and one duplicated maintenance note. |
 | [`impact-cases.json`](impact-cases.json) | Expected exact-match outcomes; demo schema only. |
 | [`run_demo.py`](run_demo.py) | Executable package-API demo with three authorized claims and one operator event. |
 
@@ -29,7 +29,7 @@ The script uses package APIs only. It creates a new schema-v3 database, imports 
 
 1. A storm-watch line was inserted before the custody record.
 2. The two-line custody record moved intact from v1 lines 4–5 to v2 lines 5–6.
-3. Mira's locker-code knowledge sentence was substantively edited.
+3. The fixture author changed Mira's locker-code knowledge sentence, so the old exact quote is absent.
 4. The maintenance note moved and appears twice in v2.
 
 ## Expected classifications
@@ -40,6 +40,10 @@ The script uses package APIs only. It creates a new schema-v3 database, imports 
 | 4–5, custody record | `EXACT_MOVED_UNIQUE` | 5–6 |
 | 8–8, maintenance note | `EXACT_MOVED_AMBIGUOUS` | 9–9, 11–11 |
 | 6–6, code knowledge | `NO_EXACT_MATCH` | none |
+
+The author-controlled fixture tells us why the final case changed. The Impact
+engine proves only `NO_EXACT_MATCH`; it does not classify the cause as an edit
+or deletion.
 
 The event-owned custody case is explicitly marked `operator_authored`. `NarrativeEvent` is not an LLM proposal type. Claim-owned descriptors represent evidence anchors only and do not imply authorization.
 
@@ -66,7 +70,7 @@ from continuityforge.impact import analyze_evidence_impact
 report = analyze_evidence_impact(evidence, target_snapshot)
 ```
 
-The v0.3.0a1 development tree implements storage-aware aggregation for claim and event evidence:
+The v0.3.0a2 development tree implements storage-aware aggregation for claim and event evidence:
 
 ```bash
 continuityforge --db north-pier.db source-impact \

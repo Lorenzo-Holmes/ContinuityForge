@@ -59,9 +59,11 @@ An attacker able to replace the entire database and its internal ledger is out o
 | Large or hostile input | File/line/JSON/report/database limits, strict decoding, control checks, duplicate-key rejection | Configured limits still consume resources up to the boundary |
 | Source revision silently invalidates memory | Deterministic report-only impact inspection | Human review is required; no automatic dispute transition |
 | Duplicate text creates false relocation certainty | `EXACT_MOVED_AMBIGUOUS` with all sorted candidates | Human must choose or reject a candidate |
-| Materialized status or event lacks audit backing | Claim authority and event evidence/ledger replay | Full DB replacement by trusted owner is not detected |
+| Materialized status or event lacks audit backing | Shared claim-authority/event replay across compiler, validator, and inspection | Full DB replacement by trusted owner is not detected |
+| Ordinary command silently migrates or creates a target | Explicit per-command database lifecycle and existing-file checks | A trusted operator can still invoke `migrate` intentionally |
 | Partial migration | Preflight, backup gate, one transaction, post-verification | Disk or hardware failure may require external recovery |
 | Unsafe live DB copy | SQLite backup API / consistent snapshot requirement | External tools can still make unsafe copies |
+| Backup path replacement or disclosure | Unpredictable private temp, identity/type checks, POSIX `0600`, no-replace publication, symlink rejection | No built-in encryption; containing directory/Windows ACL remain operator controls |
 | Report leaks source body | Metadata-first schemas and explicit quote/export boundaries | Error details and Memory Packs may contain cited excerpts |
 | Backup disclosure | File permission guidance and external encryption | No built-in encryption |
 
@@ -85,7 +87,7 @@ Evidence coordinates are strict built-in integers. Quote comparison normalizes C
 
 The pure Impact API validates whether the supplied evidence fields form a usable exact-match anchor. It cannot establish the old snapshot's historical content or source/continuity lineage by itself. The storage-aware inspection boundary must resolve and verify those facts before trusting a report.
 
-The inspection service also recomputes both endpoint snapshot hashes and line counts, verifies the global EventLedger, replays authority for every affected claim, validates report metadata, and performs all reads in one pinned transaction. It reads only the two endpoint bodies; intermediate revisions are lineage metadata.
+The inspection service also recomputes both endpoint snapshot hashes and line counts, verifies the global EventLedger, replays authority for every affected claim and the complete creation audit for every affected event, validates report metadata, and performs all reads in one pinned transaction. Event divergence fails closed with `EVENT_AUDIT_INVALID`. It reads only the two endpoint bodies; intermediate revisions are lineage metadata.
 
 Impact outcomes never mutate governance. `EXACT_MOVED_UNIQUE` is not authorization; it is only one exact relocation candidate.
 
@@ -112,7 +114,9 @@ Schema-v3 migration follows these principles:
 7. verify schema, ledger, counts, and fingerprints before activation;
 8. retain the backup until a restoration drill succeeds.
 
-In v0.3.0a1, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
+The implementation writes to an unpredictable same-directory temporary regular file, tracks its identity, enforces POSIX mode `0600`, verifies identity before writing, compares a streamed logical digest with the locked source connection, flushes the artifact, then publishes without replacing an existing destination. Existing regular backups are preserved through numbered names; symbolic-link candidates fail closed. These controls prevent accidental overwrite and common path-substitution mistakes inside the stated trusted-owner boundary, but they are not encryption or a defense against a malicious operating-system account.
+
+In v0.3.0a2, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
 
 ## Disclosure boundaries
 

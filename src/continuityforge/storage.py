@@ -16,6 +16,7 @@ from enum import Enum
 from hashlib import sha256
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -275,10 +276,25 @@ class Storage:
             if self.readonly:
                 if self.database in {":memory:", ""}:
                     raise ReadOnlyStorageError("read-only storage requires a database path")
-                if not uri:
-                    path = Path(self.database).expanduser().resolve()
-                    database_argument = path.as_uri() + "?mode=ro"
-                    uri = True
+                if uri:
+                    # Accepting caller-supplied SQLite URIs would let query
+                    # parameters and alternate URI spellings bypass the stable
+                    # local-path sidecar gate below.  The public read-only API
+                    # therefore accepts filesystem paths only and constructs
+                    # the sole supported ``mode=ro`` URI itself.
+                    raise ReadOnlyStorageError(
+                        "read-only storage requires a filesystem path, not a SQLite URI"
+                    )
+                path = Path(self.database).expanduser().resolve()
+                wal_path = path.with_name(path.name + "-wal")
+                shm_path = path.with_name(path.name + "-shm")
+                if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+                    raise ReadOnlyStorageError(
+                        "read-only storage requires an existing -shm sidecar "
+                        "when -wal exists"
+                    )
+                database_argument = path.as_uri() + "?mode=ro"
+                uri = True
             connection = sqlite3.connect(
                 database_argument,
                 timeout=self.timeout,
@@ -289,6 +305,14 @@ class Storage:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 30000")
+            if self.readonly:
+                connection.execute("PRAGMA query_only = ON")
+                query_only = connection.execute("PRAGMA query_only").fetchone()
+                if query_only is None or int(query_only[0]) != 1:
+                    connection.close()
+                    raise ReadOnlyStorageError(
+                        "SQLite did not enable the read-only query barrier"
+                    )
             self._connection = connection
 
             try:

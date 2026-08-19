@@ -14,9 +14,12 @@ from enum import Enum
 from hashlib import sha256
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
+import tempfile
 import unicodedata
 from typing import Any, Iterable, Mapping
 
@@ -1795,12 +1798,125 @@ def _database_path(connection: sqlite3.Connection) -> Path | None:
 
 
 def _unused_backup_path(database: Path) -> Path:
+    """Return a non-existent backup path without following hostile links.
+
+    Existing regular backup files are preserved by selecting a numbered name.
+    A symbolic link at any candidate is treated as an unsafe publication
+    target rather than silently followed or skipped.
+    """
+
     candidate = database.with_name(database.name + ".pre-v3.bak")
     suffix = 2
-    while candidate.exists():
+    while os.path.lexists(candidate):
+        if candidate.is_symlink():
+            raise MigrationError("unsafe symbolic-link backup target")
         candidate = database.with_name(database.name + f".pre-v3.{suffix}.bak")
         suffix += 1
+    if os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(
+        os.path.abspath(database)
+    ):
+        raise MigrationError("backup target must differ from the database")
     return candidate
+
+
+def _secure_backup_temp(database: Path) -> tuple[Path, tuple[int, int]]:
+    """Create a private, unpredictable same-directory SQLite backup target."""
+
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{database.name}.pre-v3-",
+        suffix=".tmp",
+        dir=database.parent,
+    )
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        else:
+            os.chmod(name, 0o600)
+        info = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    return Path(name), (int(info.st_dev), int(info.st_ino))
+
+
+def _assert_private_regular_file(
+    path: Path,
+    identity: tuple[int, int],
+) -> None:
+    """Fail closed if a backup path was replaced or its permissions widened."""
+
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode):
+        raise MigrationError("backup target is not a regular file")
+    if (int(info.st_dev), int(info.st_ino)) != identity:
+        raise MigrationError("backup target identity changed")
+    if os.name != "nt" and stat.S_IMODE(info.st_mode) != 0o600:
+        raise MigrationError("backup permissions are not private")
+
+
+def _unlink_if_identity(path: Path, identity: tuple[int, int]) -> bool:
+    """Unlink only the exact regular file created by this process.
+
+    Returning ``False`` is intentional for a missing or replaced path: a
+    cleanup path must never follow or remove an attacker-controlled name.
+    """
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    if (int(info.st_dev), int(info.st_ino)) != identity:
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _fsync_file(path: Path) -> None:
+    # Windows requires a writable descriptor for fsync/FlushFileBuffers.
+    descriptor = os.open(path, os.O_RDWR)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist a published directory entry where the platform supports it."""
+
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _publish_backup(
+    temporary: Path,
+    destination: Path,
+    identity: tuple[int, int],
+) -> None:
+    """Publish a verified backup atomically without replacing any path."""
+
+    if os.path.lexists(destination):
+        raise MigrationError("backup destination already exists")
+    _assert_private_regular_file(temporary, identity)
+    os.link(temporary, destination, follow_symlinks=False)
+    try:
+        _assert_private_regular_file(destination, identity)
+        _fsync_directory(destination.parent)
+    except Exception:
+        _unlink_if_identity(destination, identity)
+        raise
+    if not _unlink_if_identity(temporary, identity):
+        _unlink_if_identity(destination, identity)
+        raise MigrationError("temporary backup target identity changed")
 
 
 def _file_sha256(path: Path) -> str:
@@ -1811,10 +1927,30 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _logical_database_sha256(connection: sqlite3.Connection) -> str:
+    """Stream a deterministic logical dump digest for source/backup binding."""
+
+    digest = sha256()
+    for statement in connection.iterdump():
+        encoded = statement.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
 def _open_readonly(path: Path) -> sqlite3.Connection:
-    uri = path.resolve().as_uri() + "?mode=ro"
+    resolved = path.expanduser().resolve()
+    wal_path = resolved.with_name(resolved.name + "-wal")
+    shm_path = resolved.with_name(resolved.name + "-shm")
+    if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+        raise MigrationError(
+            "read-only migration preflight requires an existing -shm sidecar "
+            "when -wal exists"
+        )
+    uri = resolved.as_uri() + "?mode=ro"
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
@@ -2031,12 +2167,24 @@ def preflight_migration(
             and source.kind in {SchemaKind.V01, SchemaKind.V02}
             and report.is_ready
         ):
-            backup_path = _unused_backup_path(path)
+            backup_path: Path | None = None
+            temporary_backup: Path | None = None
+            backup_identity: tuple[int, int] | None = None
             backup: sqlite3.Connection | None = None
             backup_source: sqlite3.Connection = connection
             close_backup_source = False
             try:
-                backup = sqlite3.connect(str(backup_path), isolation_level=None)
+                backup_path = _unused_backup_path(path)
+                temporary_backup, backup_identity = _secure_backup_temp(path)
+                source_logical_digest = _logical_database_sha256(connection)
+                backup = sqlite3.connect(
+                    str(temporary_backup), isolation_level=None
+                )
+                # ``mkstemp`` must be closed before SQLite opens the file on
+                # Windows.  Re-check immediately after that open and before
+                # sqlite3_backup writes any page, so a replaced pathname can
+                # never redirect the backup into another regular database.
+                _assert_private_regular_file(temporary_backup, backup_identity)
                 if connection.in_transaction:
                     # ``sqlite3_backup`` cannot make progress when its source is
                     # the same connection holding BEGIN IMMEDIATE.  A second
@@ -2050,17 +2198,20 @@ def preflight_migration(
                 if close_backup_source:
                     backup_source.close()
                     close_backup_source = False
-                backup_digest = _file_sha256(backup_path)
+                _assert_private_regular_file(temporary_backup, backup_identity)
+                _fsync_file(temporary_backup)
+                backup_digest = _file_sha256(temporary_backup)
                 # A backup must itself have the same structural fingerprint,
                 # pass quick_check, and preserve referential integrity before
                 # it can admit the destructive phase.
-                backup_ro = _open_readonly(backup_path)
+                backup_ro = _open_readonly(temporary_backup)
                 try:
                     backup_fp = fingerprint_schema(backup_ro)
                     backup_quick = backup_ro.execute("PRAGMA quick_check").fetchone()
                     backup_foreign_keys = backup_ro.execute(
                         "PRAGMA foreign_key_check"
                     ).fetchall()
+                    backup_logical_digest = _logical_database_sha256(backup_ro)
                 finally:
                     backup_ro.close()
                 if (
@@ -2068,14 +2219,26 @@ def preflight_migration(
                     or not backup_quick
                     or str(backup_quick[0]).lower() != "ok"
                     or backup_foreign_keys
+                    or backup_logical_digest != source_logical_digest
                 ):
                     raise MigrationError("backup verification failed")
+                _publish_backup(
+                    temporary_backup,
+                    backup_path,
+                    backup_identity,
+                )
+                temporary_backup = None
             except Exception as exc:
                 if backup is not None:
                     backup.close()
                 if close_backup_source:
                     backup_source.close()
-                backup_path.unlink(missing_ok=True)
+                if temporary_backup is not None:
+                    if backup_identity is not None:
+                        # A replaced path is deliberately left untouched for
+                        # operator inspection.  Only our exact inode/file ID is
+                        # eligible for cleanup.
+                        _unlink_if_identity(temporary_backup, backup_identity)
                 backup_issue = MigrationIssue(
                     "MIGRATION_BACKUP_VERIFICATION_FAILED",
                     "backup creation or verification failed",
@@ -2083,6 +2246,7 @@ def preflight_migration(
                 )
                 report = replace(report, issues=report.issues + (backup_issue,))
             else:
+                assert backup_path is not None
                 report = replace(
                     report,
                     backup_path=str(backup_path),

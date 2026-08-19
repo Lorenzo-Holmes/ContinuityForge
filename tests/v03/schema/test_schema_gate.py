@@ -75,7 +75,12 @@ def test_mode_ro_entry_never_creates_or_mutates(tmp_path):
         pass
     before = _digest(database)
     with Storage.open_readonly(database) as storage:
-        assert storage.connection.execute("PRAGMA query_only").fetchone() is not None
+        assert storage.connection.execute("PRAGMA query_only").fetchone()[0] == 1
+        with pytest.raises(sqlite3.OperationalError):
+            storage.connection.execute(
+                "UPDATE schema_metadata SET migration_notes = 'forged' "
+                "WHERE singleton = 1"
+            )
         with pytest.raises(ReadOnlyStorageError):
             with storage.transaction():
                 pass

@@ -1,6 +1,6 @@
 # Security Testing
 
-This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a1 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
+This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a2 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
 
 ## Test layers
 
@@ -10,11 +10,13 @@ This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. I
 | v0.2 regression | Protect versioning, evidence, governance, ledger, compiler, CLI, and migration behavior | `tests/` |
 | Strict evidence | Reject non-built-in integers and malformed spans | `tests/v03/evidence/` |
 | Authority/event integrity | Detect missing, contradictory, or evidence-divergent audit history | `tests/v03/governance/` |
+| Trusted-surface parity | Require compiler, validator, and inspection to reject the same forged event audit | `tests/v03/security/test_event_audit_surface_parity.py` |
 | Snapshot impact | Prove deterministic classification, stable ordering, and invalid-input handling | `tests/v03/impact/unit/` |
 | Input limits | Bound source size, line length, JSON shape, and unsafe control characters | `tests/v03/security/input_limits/` |
 | Schema migration | Exercise read-only preflight, strict conversion, quarantine, backup gate, and rollback | `tests/v03/migration/`, `tests/v03/schema/` |
 | Read-only inspection | Prove no database mutation and metadata-first output | `tests/v03/readonly/`, `tests/v03/impact/integration/` |
-| Alpha CLI | Verify `source-impact`, `migration-check`, and `migrate` routing, output, and failure behavior | `tests/v03/cli/` |
+| Alpha CLI/contracts | Verify explicit database lifecycles, no implicit migration, stable error envelopes, and alpha command behavior | `tests/v03/cli/`, `tests/v03/contracts/` |
+| Distribution | Verify clean wheel/sdist metadata and require core docs, licenses, and the North Pier demo in the sdist | `tests/v03/packaging/` |
 
 Run all available tests from the repository root:
 
@@ -24,7 +26,7 @@ python -m pytest
 python -m compileall -q src tests
 ```
 
-CI runs the coverage-gated suite on Linux with Python 3.10–3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. A separate job builds both distributions, inspects their contents/metadata, installs the wheel in a clean environment, exercises the alpha CLI, and runs both demos.
+CI runs the coverage-gated suite on Linux with Python 3.10–3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. A separate job builds both distributions, inspects their contents/metadata, installs the wheel in a clean environment, exercises the alpha CLI, and runs North Pier from the unpacked sdist rather than the checkout.
 
 ## Threat-to-test matrix
 
@@ -37,15 +39,18 @@ CI runs the coverage-gated suite on Linux with Python 3.10–3.14 and on Windows
 | Duplicate JSON keys | Ingest rejects ambiguous structure rather than choosing one value. |
 | Disallowed control characters | Ingest rejects them with deterministic diagnostics. |
 | Missing authority history | An `AUTHORIZED` row without a valid decision chain is excluded or reported invalid. |
-| Event row without matching creation audit | Compilation excludes it and project validation reports an error. |
+| Event row without matching creation audit | Compiler, validator, and source-impact inspection reject the same audit divergence; inspection emits `EVENT_AUDIT_INVALID`. |
 | Concurrent review during compilation | The Memory Pack uses one pinned SQLite snapshot and never mixes old authority with new evidence. |
 | Ledger reorder, update, or deletion | Chain verification fails. |
 | Repeated target text | Impact returns every exact candidate once, in source order. |
 | Invalid or non-UTF-8-encodable evidence quote | Impact returns `INVALID_EVIDENCE`, never an encoding traceback. |
-| Changed source text | Impact returns `NO_EXACT_MATCH`; it does not use fuzzy inference. |
+| Old exact quote absent from target | Impact returns `NO_EXACT_MATCH`; it does not infer whether the cause was editing, deletion, truncation, or restructuring. |
 | Impact analysis | No claim status, decision, snapshot, evidence, or ledger row changes. |
 | Malformed legacy row | Preflight blocks migration or quarantines it without increasing authority/access. |
 | Migration failure | The transaction rolls back and the verified pre-migration backup remains restorable. |
+| Missing database for an existing-database command | `DATABASE_NOT_FOUND`; no database, parent directory, journal, WAL, SHM, or backup is created. |
+| Legacy database passed to an ordinary command | The command requires explicit migration and does not invoke a writable migration path. |
+| Existing or symbolic-link backup destination | Existing regular backups remain untouched; symbolic-link candidates and target identity changes fail closed. |
 | Administrative report | Full source bodies and unrestricted quotes are absent unless explicitly requested by an authorized operator. |
 
 ## Snapshot Impact cases
@@ -55,7 +60,7 @@ The pure-domain suite should include:
 - unchanged anchors at the same span, including a duplicate elsewhere;
 - one exact moved candidate;
 - multiple exact moved candidates, including overlapping matches;
-- no exact candidate after an edit;
+- no exact candidate when the old quote is absent; the engine does not infer why;
 - CRLF/LF normalization without other whitespace normalization;
 - multiline quotes and blank lines;
 - stable candidate sorting and frozen result objects;
@@ -76,8 +81,11 @@ Every supported starting schema needs at least these cases:
 5. restore occurs in staging, passes integrity/schema/ledger/authority checks, then activates atomically;
 6. a restored v0.1/v0.2 fixture still passes its observable compatibility suite;
 7. preflight and inspection leave the main database, WAL, schema, and logical row counts unchanged; SQLite may update coordination bytes in an already-existing `-shm` file.
+8. backup publication preserves existing regular artifacts, rejects symbolic-link targets, verifies file identity/type, and retains POSIX mode `0600`.
 
 `migration-check` is implemented but unreleased. Its CLI path sets `create_backup=False`; tests must assert no database, missing sidecar, backup, schema, or logical row creation/mutation. When inspecting a live WAL database, SQLite may update coordination bytes in an already-existing `-shm` file; callers that require byte-for-byte filesystem immutability must inspect a private consistent copy. Its report schema is not frozen.
+
+CLI lifecycle tests cover all commands, not only the three alpha commands. Only `ingest` and `demo` are create-capable; governance/event writes require an existing schema-v3 database, ordinary reads require an existing database without migrating it, and `migrate` is the sole explicit upgrade route.
 
 ## Redaction assertions
 
@@ -102,4 +110,5 @@ A v0.3 release candidate is blocked until:
 - migration rollback and staged restore tests pass;
 - default administrative-report redaction tests pass;
 - all v0.3 alpha CLI behavior is implemented, tested, documented, and clearly marked unreleased;
+- wheel and sdist inspection passes, and North Pier runs from an unpacked sdist against the clean-installed wheel;
 - security-relevant changes receive review against [Threat Model](THREAT_MODEL.md).

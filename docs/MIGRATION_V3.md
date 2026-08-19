@@ -2,7 +2,7 @@
 
 ## Status
 
-Schema version 3, strict structural fingerprinting, read-only preflight, verified backup creation, transactional migration, and functional v0.1 quarantine are **implemented in the unreleased v0.3.0a1 development tree**. The commands and report schema remain pre-release interfaces.
+Schema version 3, strict structural fingerprinting, read-only preflight, verified backup creation, transactional migration, and functional v0.1 quarantine are **implemented in the unreleased v0.3.0a2 development tree**. The commands and report schema remain pre-release interfaces.
 
 ```bash
 # Existing database; performs checks only and creates no backup.
@@ -12,7 +12,7 @@ continuityforge --db project.db migration-check --mode strict
 continuityforge --db project.db migrate --mode strict
 ```
 
-Both commands accept `--mode strict|quarantine`. `migrate` refuses a missing database instead of silently creating one.
+Both commands accept `--mode strict|quarantine`. `migrate` refuses a missing database instead of silently creating one. Ordinary read/write commands do not migrate: a recognized v0.1/v0.2 target must pass through the explicit `migration-check` and `migrate` lifecycle.
 
 The alpha admits only the byte-locked, canonical v0.1 schema and canonical supported v0.2 layouts. A v0.1 database with extra alias tables, columns, weakened constraints, indexes, triggers, or views is classified `PARTIAL` and fails closed in both modes; it is not guessed into an active mapping.
 
@@ -76,7 +76,9 @@ The library function is `preflight_migration(database, mode=..., create_backup=.
 
 ## Backup gate
 
-`migrate` and `migrate_to_v3(...)` admit a v0.1/v0.2 write migration only after creating a consistent SQLite backup, hashing it, opening it independently, verifying `quick_check`, and confirming that its structural fingerprint matches the source. Copying only the main database file while a WAL database is live is not sufficient.
+`migrate` and `migrate_to_v3(...)` admit a v0.1/v0.2 write migration only after creating a consistent SQLite backup, hashing it, opening it independently, verifying `quick_check` and foreign keys, and confirming that both its structural fingerprint and streamed logical-database digest match the locked source connection. Copying only the main database file while a WAL database is live is not sufficient.
+
+The backup is first written to an unpredictable same-directory private temporary file. Its identity, regular-file type, and—on POSIX—`0600` mode are checked before and after verification. Publication never replaces an existing path; numbered regular-file destinations are preserved, while a symbolic-link candidate or an identity change fails closed. The migration begins only after the verified artifact has been flushed and published.
 
 The migration record should bind to backup metadata such as:
 
@@ -87,7 +89,7 @@ The migration record should bind to backup metadata such as:
 - creation time;
 - verification result.
 
-Backup files contain complete source content and require restrictive permissions or external encryption.
+Backup files contain complete source content. The migration path creates a restrictive artifact, but the operator remains responsible for directory/ACL protection, external encryption, retention, and off-site handling.
 
 ## Transaction boundary
 
@@ -113,7 +115,7 @@ Stopping is preferable to guessing.
 
 ## Explicit quarantine mode
 
-Quarantine is optional and must be explicitly selected. v0.3.0a1 applies functional quarantine only while migrating v0.1: each malformed row remains in its renamed legacy table and `legacy_records`, and no active domain row is created for it. Dependent v0.1 rows are quarantined with their invalid snapshot when required.
+Quarantine is optional and must be explicitly selected. v0.3.0a2 applies functional quarantine only while migrating v0.1: each malformed row remains in its renamed legacy table and `legacy_records`, and no active domain row is created for it. Dependent v0.1 rows are quarantined with their invalid snapshot when required.
 
 Malformed v0.2 data remains a blocking error even in quarantine mode. The alpha does not reinterpret or partially map malformed v0.2 provenance.
 

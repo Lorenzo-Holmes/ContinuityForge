@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -12,6 +13,13 @@ from typing import Any, Iterable, Sequence
 from . import __version__
 from .compiler import MemoryCompiler
 from .constants import (
+    CLI_COMMAND_LIFECYCLE,
+    CLI_ERROR_SCHEMA,
+    CLI_LIFECYCLE_CREATE_CAPABLE,
+    CLI_LIFECYCLE_EXPLICIT_MIGRATE,
+    CLI_LIFECYCLE_READ_EXISTING,
+    CLI_LIFECYCLE_WRITE_EXISTING,
+    CLI_STABLE_DOMAIN_ERROR_CODES,
     EXIT_GOVERNANCE_FAILED,
     EXIT_LEDGER_FAILED,
     EXIT_OK,
@@ -21,8 +29,11 @@ from .constants import (
 from .evidence import EvidenceValidator, build_evidence_ref
 from .exceptions import (
     ContinuityForgeError,
+    DatabaseNotFoundError,
     EvidenceValidationError,
+    ExplicitMigrationRequiredError,
     GovernanceConflictError,
+    InspectionError,
     LedgerIntegrityError,
     MigrationError,
     NotFoundError,
@@ -42,6 +53,7 @@ from .models import (
 )
 from .serialization import json_dumps, to_primitive, write_json
 from .readonly import ReadOnlyProject
+from .schema import SchemaKind, fingerprint_schema
 from .storage import Storage
 from .timeutil import isoformat_utc
 from .validate import ProjectValidator
@@ -107,11 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--continuity", required=True)
     ingest.add_argument("--source-key")
     ingest.add_argument("--encoding")
-    ingest.set_defaults(handler=_handle_ingest)
+    ingest.set_defaults(
+        handler=_handle_ingest,
+        lifecycle=CLI_COMMAND_LIFECYCLE["ingest"],
+    )
 
     source_list = commands.add_parser("source-list", help="list logical sources")
     source_list.add_argument("--continuity")
-    source_list.set_defaults(handler=_handle_source_list)
+    source_list.set_defaults(
+        handler=_handle_source_list,
+        lifecycle=CLI_COMMAND_LIFECYCLE["source-list"],
+    )
 
     propose = commands.add_parser(
         "claim-propose", help="store untrusted model/human output as PROPOSED"
@@ -124,7 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="mark proposer as human; still does not authorize",
     )
-    propose.set_defaults(handler=_handle_claim_propose)
+    propose.set_defaults(
+        handler=_handle_claim_propose,
+        lifecycle=CLI_COMMAND_LIFECYCLE["claim-propose"],
+    )
 
     claim_add = commands.add_parser(
         "claim-add",
@@ -135,7 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
     claim_add.add_argument(
         "--reason", default="v0.1 claim-add compatibility path"
     )
-    claim_add.set_defaults(handler=_handle_claim_add)
+    claim_add.set_defaults(
+        handler=_handle_claim_add,
+        lifecycle=CLI_COMMAND_LIFECYCLE["claim-add"],
+    )
 
     review = commands.add_parser(
         "claim-review", help="record AUTHORIZED, REJECTED, or DISPUTED"
@@ -152,7 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review.add_argument("--reviewer", required=True)
     review.add_argument("--reason", required=True)
-    review.set_defaults(handler=_handle_claim_review)
+    review.set_defaults(
+        handler=_handle_claim_review,
+        lifecycle=CLI_COMMAND_LIFECYCLE["claim-review"],
+    )
 
     claim_list = commands.add_parser("claim-list", help="list claim proposals")
     claim_list.add_argument("--persona", dest="persona_id")
@@ -160,7 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
     claim_list.add_argument(
         "--status", choices=[item.value.lower() for item in GovernanceStatus]
     )
-    claim_list.set_defaults(handler=_handle_claim_list)
+    claim_list.set_defaults(
+        handler=_handle_claim_list,
+        lifecycle=CLI_COMMAND_LIFECYCLE["claim-list"],
+    )
 
     event = commands.add_parser("event-add", help="append a source-backed narrative event")
     event.add_argument("--persona", required=True, dest="persona_id")
@@ -179,12 +209,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=AccessPolicy.AGENT_ACCESSIBLE.value,
     )
     event.add_argument("--evidence", action="append", default=[])
-    event.set_defaults(handler=_handle_event_add)
+    event.set_defaults(
+        handler=_handle_event_add,
+        lifecycle=CLI_COMMAND_LIFECYCLE["event-add"],
+    )
 
     validate = commands.add_parser("validate", help="validate the complete project")
     validate.add_argument("--json", action="store_true", dest="as_json")
     validate.add_argument("--strict-proposals", action="store_true")
-    validate.set_defaults(handler=_handle_validate)
+    validate.set_defaults(
+        handler=_handle_validate,
+        lifecycle=CLI_COMMAND_LIFECYCLE["validate"],
+    )
 
     compile_command = commands.add_parser(
         "compile", help="compile an authorized memory pack at a cutoff"
@@ -195,16 +231,25 @@ def build_parser() -> argparse.ArgumentParser:
     compile_command.add_argument("--valid-at")
     compile_command.add_argument("--include-human-only", action="store_true")
     compile_command.add_argument("-o", "--output", type=Path)
-    compile_command.set_defaults(handler=_handle_compile)
+    compile_command.set_defaults(
+        handler=_handle_compile,
+        lifecycle=CLI_COMMAND_LIFECYCLE["compile"],
+    )
 
     ledger_verify = commands.add_parser(
         "ledger-verify", help="verify the append-only EventLedger hash chain"
     )
-    ledger_verify.set_defaults(handler=_handle_ledger_verify)
+    ledger_verify.set_defaults(
+        handler=_handle_ledger_verify,
+        lifecycle=CLI_COMMAND_LIFECYCLE["ledger-verify"],
+    )
 
     ledger_show = commands.add_parser("ledger-show", help="print EventLedger entries")
     ledger_show.add_argument("--limit", type=int)
-    ledger_show.set_defaults(handler=_handle_ledger_show)
+    ledger_show.set_defaults(
+        handler=_handle_ledger_show,
+        lifecycle=CLI_COMMAND_LIFECYCLE["ledger-show"],
+    )
 
     source_impact = commands.add_parser(
         "source-impact",
@@ -224,7 +269,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     source_impact.set_defaults(
         handler=_handle_source_impact,
+        lifecycle=CLI_COMMAND_LIFECYCLE["source-impact"],
         owns_storage=True,
+        requires_current=False,
         redact_errors=True,
     )
 
@@ -239,7 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migration_check.set_defaults(
         handler=_handle_migration_check,
+        lifecycle=CLI_COMMAND_LIFECYCLE["migration-check"],
         owns_storage=True,
+        requires_current=False,
         redact_errors=True,
     )
 
@@ -254,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate.set_defaults(
         handler=_handle_migrate,
+        lifecycle=CLI_COMMAND_LIFECYCLE["migrate"],
         owns_storage=True,
         redact_errors=True,
     )
@@ -261,7 +311,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo = commands.add_parser("demo", help="run the Alpha/Beta isolation demo")
     demo.add_argument("--output-dir", type=Path, default=Path("demo-output"))
     demo.add_argument("--reset", action="store_true")
-    demo.set_defaults(handler=_handle_demo, owns_storage=True)
+    demo.set_defaults(
+        handler=_handle_demo,
+        lifecycle=CLI_COMMAND_LIFECYCLE["demo"],
+        owns_storage=True,
+    )
     return parser
 
 
@@ -510,8 +564,6 @@ def _handle_migration_check(
 def _handle_migrate(_storage: Storage | None, args: argparse.Namespace) -> int:
     """Run the explicit backup-gated schema-v3 migration workflow."""
 
-    if not args.db.is_file():
-        raise FileNotFoundError(f"project database not found: {args.db}")
     report = migrate_to_v3(
         args.db,
         mode=MigrationMode(args.mode),
@@ -527,6 +579,10 @@ def _handle_demo(_storage: Storage | None, args: argparse.Namespace) -> int:
     db_path = output_dir / "continuityforge-demo.db"
     if args.reset and db_path.exists():
         db_path.unlink()
+    elif db_path.exists() or db_path.is_symlink():
+        # Demo is create-capable, not migration-capable.  Reusing a legacy or
+        # malformed file must never silently run Storage's migration path.
+        db_path = _require_current_database(db_path)
     with Storage(db_path) as storage:
         alpha = "Mira entered the Alpha observatory.\nThe archive code is ORION-7.\n"
         beta = "Mira never reached the Beta observatory.\nThe archive remained sealed.\n"
@@ -604,18 +660,104 @@ def _handle_demo(_storage: Storage | None, args: argparse.Namespace) -> int:
         return EXIT_OK if all(checks.values()) else EXIT_VALIDATION_FAILED
 
 
+def _require_existing_database(database: str | Path) -> Path:
+    """Resolve an existing regular DB without creating parents or sidecars."""
+
+    candidate = Path(database).expanduser()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise DatabaseNotFoundError("project database not found") from exc
+    if not resolved.is_file():
+        raise DatabaseNotFoundError("project database not found")
+    return resolved
+
+
+def _database_schema_kind(database: Path) -> SchemaKind:
+    """Fingerprint a database through SQLite's existing-file read-only mode."""
+
+    connection = sqlite3.connect(
+        f"{database.as_uri()}?mode=ro",
+        uri=True,
+        isolation_level=None,
+    )
+    try:
+        return fingerprint_schema(connection).kind
+    finally:
+        connection.close()
+
+
+def _require_readonly_sidecars(database: Path) -> None:
+    """Prevent SQLite from creating a missing shared-memory WAL sidecar."""
+
+    wal_path = database.with_name(database.name + "-wal")
+    shm_path = database.with_name(database.name + "-shm")
+    if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+        raise ReadOnlyStorageError(
+            "read-only command requires an existing -shm sidecar when -wal exists"
+        )
+
+
+def _require_current_database(database: str | Path) -> Path:
+    resolved = _require_existing_database(database)
+    kind = _database_schema_kind(resolved)
+    if kind in {SchemaKind.V01, SchemaKind.V02}:
+        raise ExplicitMigrationRequiredError(
+            "database requires explicit migration; run 'continuityforge migrate'"
+        )
+    if kind is not SchemaKind.V03:
+        raise SchemaError("database schema is unsupported or incomplete")
+    return resolved
+
+
 def _run(args: argparse.Namespace) -> int:
-    if getattr(args, "owns_storage", False):
+    lifecycle = getattr(args, "lifecycle", None)
+
+    if lifecycle == CLI_LIFECYCLE_EXPLICIT_MIGRATE:
+        args.db = _require_existing_database(args.db)
         return args.handler(None, args)
-    args.db.parent.mkdir(parents=True, exist_ok=True)
-    with Storage(args.db) as storage:
-        return args.handler(storage, args)
+
+    if lifecycle == CLI_LIFECYCLE_READ_EXISTING:
+        args.db = _require_existing_database(args.db)
+        _require_readonly_sidecars(args.db)
+        if getattr(args, "requires_current", True):
+            args.db = _require_current_database(args.db)
+        if getattr(args, "owns_storage", False):
+            return args.handler(None, args)
+        with Storage.open_readonly(args.db) as storage:
+            return args.handler(storage, args)
+
+    if lifecycle == CLI_LIFECYCLE_WRITE_EXISTING:
+        args.db = _require_current_database(args.db)
+        with Storage(args.db) as storage:
+            return args.handler(storage, args)
+
+    if lifecycle == CLI_LIFECYCLE_CREATE_CAPABLE:
+        if getattr(args, "owns_storage", False):
+            return args.handler(None, args)
+        candidate = Path(args.db).expanduser()
+        if candidate.exists() or candidate.is_symlink():
+            args.db = _require_current_database(candidate)
+        else:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            args.db = candidate
+        with Storage(args.db) as storage:
+            return args.handler(storage, args)
+
+    raise SchemaError("command lifecycle contract is missing or invalid")
 
 
 def _stable_error_code(exc: BaseException) -> str:
     domain_code = getattr(exc, "code", None)
-    if isinstance(domain_code, str) and domain_code.strip():
+    if (
+        isinstance(domain_code, str)
+        and domain_code.strip() in CLI_STABLE_DOMAIN_ERROR_CODES
+    ):
         return domain_code.strip()
+    if isinstance(exc, DatabaseNotFoundError):
+        return "DATABASE_NOT_FOUND"
+    if isinstance(exc, ExplicitMigrationRequiredError):
+        return "MIGRATION_REQUIRED"
     if isinstance(exc, MigrationError):
         return "MIGRATION_FAILED"
     if isinstance(exc, ReadOnlyStorageError):
@@ -628,6 +770,8 @@ def _stable_error_code(exc: BaseException) -> str:
         return "GOVERNANCE_CONFLICT"
     if isinstance(exc, LedgerIntegrityError):
         return "LEDGER_INTEGRITY_FAILED"
+    if isinstance(exc, InspectionError):
+        return "INSPECTION_ERROR"
     if isinstance(exc, NotFoundError):
         return "NOT_FOUND"
     if isinstance(exc, FileNotFoundError):
@@ -635,7 +779,7 @@ def _stable_error_code(exc: BaseException) -> str:
     if isinstance(exc, sqlite3.Error):
         return "SQLITE_ERROR"
     if isinstance(exc, ContinuityForgeError):
-        return type(exc).__name__.removesuffix("Error").upper()
+        return "DOMAIN_ERROR"
     return "INVALID_ARGUMENT"
 
 
@@ -664,7 +808,7 @@ def _emit_error(
     *, details: dict[str, Any] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
-        "schema": "continuityforge.error/v0.3",
+        "schema": CLI_ERROR_SCHEMA,
         "code": _stable_error_code(exc),
         # Retained for v0.2 CLI consumers that keyed on the exception name.
         "error": type(exc).__name__,

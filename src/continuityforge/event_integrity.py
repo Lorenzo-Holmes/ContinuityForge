@@ -228,8 +228,26 @@ def validate_event_audits(
             for event in event_items
         }
 
+    return replay_event_audits(event_items, entries, evidence)
+
+
+def replay_event_audits(
+    events: Iterable[NarrativeEvent],
+    ledger_entries: Iterable[LedgerEntry],
+    evidence: Iterable[EvidenceRef],
+) -> dict[str, EventAuditReport]:
+    """Replay a caller-supplied, already-bounded event audit batch.
+
+    Storage-backed validation and read-only impact inspection share this pure
+    grouping path so the same event row, ledger entries, and complete evidence
+    set always receive the same deterministic verdict.  Callers remain
+    responsible for establishing the scope and resource bounds of the supplied
+    material before invoking this function.
+    """
+
+    event_items = list(events)
     entries_by_event: dict[str, list[LedgerEntry]] = {}
-    for entry in entries:
+    for entry in ledger_entries:
         entries_by_event.setdefault(entry.aggregate_id, []).append(entry)
     evidence_by_event: dict[str, list[EvidenceRef]] = {}
     for item in evidence:
@@ -250,5 +268,6 @@ __all__ = [
     "EventAuditReport",
     "EventAuditStorage",
     "replay_event_audit",
+    "replay_event_audits",
     "validate_event_audits",
 ]

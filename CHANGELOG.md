@@ -17,15 +17,29 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Backup-gated, transactional v0.1/v0.2 to v0.3 migration through the unreleased `migrate` command.
 - Explicit v0.1 quarantine mode that preserves each malformed row in legacy storage without creating an active domain row; malformed v0.2 data still blocks migration.
 - A URI/read-barrier-based `ReadOnlyProject` and storage-aware `InspectionService` for source/continuity-safe claim and event impact reports, versioned as `continuityforge.source-impact/v0.3-alpha` with both snapshot hashes and no source body/quote fields.
-- Bounded endpoint-only impact inspection with snapshot hash/line-count verification, global ledger and affected-claim authority replay, batched exact matching, and metadata injection controls.
+- Bounded endpoint-only impact inspection with snapshot hash/line-count verification, global ledger, affected-claim authority, and affected-event creation-audit replay, batched exact matching, and metadata injection controls.
 - Unreleased `source-impact`, `migration-check`, and `migrate` alpha CLI commands with metadata-first JSON reports.
-- Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10–3.14 coverage, distribution inspection, clean-wheel installation, and demo smoke tests.
+- Explicit create-capable, write-existing, read-existing, and explicit-migrate CLI lifecycles, with stable missing-database and migration-required errors.
+- Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10–3.14 coverage, wheel/sdist inspection, clean-wheel installation, and an unpacked-sdist North Pier smoke test.
 - v0.3 architecture, threat-model, migration, backup/restore, data-model, security-testing, and demo-license documentation.
 - Original North Pier v1/v2 revision-impact fixtures.
 
+### Changed
+
+- Ordinary read, validation, compile, list, ledger, governance, and event commands no longer initialize or migrate a database as a side effect; legacy upgrades require the explicit `migrate` path.
+- `NO_EXACT_MATCH` documentation now states only that the old continuous exact quote is absent. It does not label the cause as editing, deletion, truncation, or line restructuring.
+- Source distributions now include the core documentation set, license notices, and executable North Pier fixtures while excluding tests and database/credential-like artifacts.
+
+### Fixed
+
+- Source-impact now replays the same complete event audit used by compiler and validator, in one bounded batch inside the pinned read transaction; divergent affected events fail with `EVENT_AUDIT_INVALID`.
+- Existing-database commands now return `DATABASE_NOT_FOUND` for a missing target without creating the database, parent directory, or SQLite sidecars.
+- Read-only CLI, Storage, and migration-preflight paths now reject an incomplete WAL/SHM sidecar set before SQLite can create a missing SHM file; caller-supplied SQLite URIs are rejected by `Storage.open_readonly`.
+- Migration backups are bound to the locked source through a streamed logical-database digest, and temporary-file identity is rechecked before any backup page is written.
+
 ### Pre-release limitations
 
-- v0.3.0a1 has not been released and new command/report schemas may change.
+- v0.3.0a2 has not been released and new command/report schemas may change.
 - Restore and deployment activation remain operator workflows; there is no restore CLI.
 - HTTP, MCP, provider adapters, semantic impact, and automatic governance changes remain deferred.
 
@@ -34,6 +48,8 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Documented the trusted operating-system/SQLite-owner boundary.
 - Defined metadata-first administrative reports that omit complete source bodies by default.
 - Preserved the operator-only `NarrativeEvent` boundary and report-only impact behavior.
+- Hardened migration backups with unpredictable same-directory temporary files, identity/type verification, POSIX `0600`, collision-safe no-replace publication, and symbolic-link rejection.
+- Raised the cross-platform branch-coverage gate from 70% to 75% and added trusted-read-surface parity contracts.
 
 ## [0.2.0] - 2026-08-19
 

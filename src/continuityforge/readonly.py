@@ -73,6 +73,14 @@ class ClaimAuthorityMaterial:
 
 
 @dataclass(frozen=True, slots=True)
+class EventAuditMaterial:
+    """Bounded bulk inputs for replaying events affected by one snapshot."""
+
+    ledger_entries: tuple[LedgerEntry, ...]
+    evidence: tuple[EvidenceRef, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProvenanceRecord:
     """One stored evidence reference and the aggregate that owns it."""
 
@@ -1270,9 +1278,103 @@ class ReadOnlyProject:
         evidence = tuple(self._claim_evidence(row) for row in evidence_rows)
         return ClaimAuthorityMaterial(decisions, ledger_entries, evidence)
 
+    def get_event_audit_for_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        max_records: int,
+        max_material_bytes: int,
+    ) -> EventAuditMaterial:
+        """Bulk-load bounded audit inputs for events citing one snapshot.
+
+        The affected event IDs are resolved inside each fixed set query.  The
+        method loads the complete evidence set for every affected event, not
+        only the evidence anchored to ``snapshot_id``, because the creation
+        ledger binds that complete set.  No query count depends on the number
+        of affected events.
+        """
+
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("snapshot_id must be non-empty")
+        if type(max_records) is not int or max_records < 1:
+            raise ValueError("max_records must be a positive built-in integer")
+        if type(max_material_bytes) is not int or max_material_bytes < 1:
+            raise ValueError("max_material_bytes must be a positive built-in integer")
+        if "event_evidence_refs" not in self._tables:
+            return EventAuditMaterial((), ())
+
+        affected_cte = (
+            "WITH affected(event_id) AS ("
+            "SELECT DISTINCT event_id FROM event_evidence_refs WHERE snapshot_id = ?"
+            ") "
+        )
+        stats = self.connection.execute(
+            affected_cte
+            + "SELECT "
+            "(SELECT COUNT(*) FROM event_ledger el JOIN affected a "
+            "ON a.event_id = el.aggregate_id "
+            "WHERE el.aggregate_type = 'narrative_event') AS ledger_entries, "
+            "(SELECT COUNT(*) FROM event_evidence_refs eer JOIN affected a "
+            "ON a.event_id = eer.event_id) AS evidence, "
+            "(SELECT COALESCE(SUM("
+            "length(CAST(el.entry_id AS BLOB)) + "
+            "length(CAST(el.event_type AS BLOB)) + "
+            "length(CAST(el.aggregate_type AS BLOB)) + "
+            "length(CAST(el.aggregate_id AS BLOB)) + "
+            "length(CAST(el.payload_json AS BLOB)) + "
+            "length(CAST(el.previous_hash AS BLOB)) + "
+            "length(CAST(el.entry_hash AS BLOB)) + "
+            "length(CAST(el.created_at AS BLOB))"
+            "), 0) FROM event_ledger el JOIN affected a "
+            "ON a.event_id = el.aggregate_id "
+            "WHERE el.aggregate_type = 'narrative_event') + "
+            "(SELECT COALESCE(SUM("
+            "length(CAST(eer.evidence_id AS BLOB)) + "
+            "length(CAST(eer.event_id AS BLOB)) + "
+            "length(CAST(eer.snapshot_id AS BLOB)) + "
+            "length(CAST(COALESCE(eer.quote, '') AS BLOB)) + "
+            "length(CAST(COALESCE(eer.content_hash, '') AS BLOB)) + "
+            "length(CAST(eer.created_at AS BLOB))"
+            "), 0) FROM event_evidence_refs eer JOIN affected a "
+            "ON a.event_id = eer.event_id) AS material_bytes",
+            (snapshot_id,),
+        ).fetchone()
+        assert stats is not None
+        total = int(stats["ledger_entries"]) + int(stats["evidence"])
+        if total > max_records:
+            raise InspectionLimitError(
+                "INSPECTION_EVENT_AUDIT_RECORD_LIMIT_EXCEEDED",
+                "event audit material exceeds the inspection record limit",
+            )
+        if int(stats["material_bytes"]) > max_material_bytes:
+            raise InspectionLimitError(
+                "INSPECTION_EVENT_AUDIT_BYTES_LIMIT_EXCEEDED",
+                "event audit material exceeds the inspection byte limit",
+            )
+
+        ledger_rows = self.connection.execute(
+            affected_cte
+            + "SELECT el.* FROM event_ledger el JOIN affected a "
+            "ON a.event_id = el.aggregate_id "
+            "WHERE el.aggregate_type = 'narrative_event' ORDER BY el.sequence",
+            (snapshot_id,),
+        )
+        ledger_entries = tuple(self._ledger_entry(row) for row in ledger_rows)
+        evidence_rows = self.connection.execute(
+            affected_cte
+            + "SELECT eer.* FROM event_evidence_refs eer JOIN affected a "
+            "ON a.event_id = eer.event_id "
+            "ORDER BY eer.event_id, eer.snapshot_id, eer.start_line, "
+            "eer.end_line, eer.evidence_id",
+            (snapshot_id,),
+        )
+        evidence = tuple(self._event_evidence(row) for row in evidence_rows)
+        return EventAuditMaterial(ledger_entries, evidence)
+
 
 __all__ = [
     "ClaimAuthorityMaterial",
+    "EventAuditMaterial",
     "ProvenanceRecord",
     "ReadOnlyProject",
     "SnapshotMetadata",

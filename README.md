@@ -10,7 +10,7 @@ ContinuityForge is a local, dependency-light compiler above RAG and memory store
 
 - **v0.1:** frozen observable compatibility baseline.
 - **v0.2.0:** current released CLI, SQLite, governance, ledger, and Memory Pack workflow.
-- **v0.3.0a1:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
+- **v0.3.0a2:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
 
 The v0.1 and v0.2 contracts remain intact while v0.3 is developed. Alpha commands are executable in the development tree but are not a stable release contract yet.
 
@@ -30,7 +30,7 @@ Released v0.2 behavior provides:
 - JSON Memory Packs retaining claim and evidence provenance;
 - zero third-party runtime dependencies.
 
-Implemented, unreleased v0.3.0a1 work strengthens those guarantees with:
+Implemented, unreleased v0.3.0a2 work strengthens those guarantees with:
 
 - strict built-in-integer evidence coordinates;
 - bounded, control-aware source ingestion;
@@ -38,9 +38,11 @@ Implemented, unreleased v0.3.0a1 work strengthens those guarantees with:
 - claim authority-chain and narrative-event audit replay before compilation;
 - one pinned SQLite read snapshot for each Memory Pack compilation;
 - deterministic, exact SourceSnapshot impact classification;
-- bounded, hash-bound, storage-aware impact inspection with ledger and claim-authority replay;
+- bounded, hash-bound, storage-aware impact inspection with ledger, claim-authority, and affected-event audit replay;
 - strict schema recognition and read-only migration preflight;
 - transactional, schema-fingerprinted, backup-gated v0.1/v0.2 to v0.3 migration;
+- private, collision-safe backup publication that never overwrites an existing artifact;
+- explicit CLI database lifecycles with no ordinary-command implicit migration;
 - functional v0.1 quarantine that preserves bad rows without mapping them into active authority.
 
 The alpha currently passes the complete regression suite, but its new CLI/report schemas can still change before release. See [Migration v3](docs/MIGRATION_V3.md) and [Snapshot Impact](docs/SNAPSHOT_IMPACT.md).
@@ -70,7 +72,7 @@ Snapshot impact is **report-only**. A new source version can produce an impact r
 
 ### Source-body disclosure
 
-v0.3.0a1 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
+v0.3.0a2 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
 
 ## Architecture at a glance
 
@@ -168,7 +170,20 @@ continuityforge --db forge.db compile \
 
 Use `continuityforge COMMAND --help` for released options.
 
-## v0.3.0a1 preview CLI—implemented, unreleased
+## v0.3.0a2 database lifecycle
+
+Every command now declares how it may interact with the database path:
+
+| Lifecycle | Commands | Behavior |
+|---|---|---|
+| Create-capable | `ingest`, `demo` | May create a new schema-v3 database. An existing legacy database is not migrated implicitly. |
+| Write-existing | `claim-propose`, `claim-add`, `claim-review`, `event-add` | Require an existing schema-v3 database. |
+| Read-existing | `source-list`, `claim-list`, `validate`, `compile`, `ledger-verify`, `ledger-show`, `source-impact`, `migration-check` | Require an existing database and do not create a database, parent directory, or backup. Ordinary read commands require schema v3; migration inspection remains explicit. |
+| Explicit migration | `migrate` | Is the only CLI lifecycle permitted to upgrade an existing v0.1/v0.2 database. |
+
+A missing existing-database target fails with `DATABASE_NOT_FOUND` and no filesystem side effects. An ordinary command aimed at a recognized legacy database fails closed instead of constructing writable `Storage`; run `migration-check`, then `migrate` explicitly.
+
+## v0.3.0a2 preview CLI—implemented, unreleased
 
 These commands are executable in the development tree. Their current flags are tested, but the commands and JSON report schemas remain pre-release interfaces.
 
@@ -193,11 +208,13 @@ continuityforge --db project.db migration-check --mode strict
 continuityforge --db project.db migrate --mode strict
 ```
 
-`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a1; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
+`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a2; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
+
+Affected event evidence is admitted to an impact report only after the complete bounded event batch is replayed against its creation ledger material inside the same pinned read transaction. A mismatch fails closed with `EVENT_AUDIT_INVALID`; inspection does not downgrade the event to an unaudited anchor.
 
 ## Deterministic Impact API
 
-The v0.3.0a1 pure-domain Impact engine is available to library callers in the development tree:
+The v0.3.0a2 pure-domain Impact engine is available to library callers in the development tree:
 
 ```python
 from continuityforge.impact import analyze_evidence_impact
@@ -213,7 +230,7 @@ See [Snapshot Impact](docs/SNAPSHOT_IMPACT.md).
 
 ## North Pier revision demo
 
-The fully original [North Pier demo](examples/north_pier/README.md) contains v1/v2 source fixtures and expected deterministic outcomes for unchanged, uniquely moved, ambiguously repeated, and edited evidence.
+The fully original [North Pier demo](examples/north_pier/README.md) contains v1/v2 source fixtures and expected deterministic outcomes for unchanged, uniquely moved, ambiguously repeated, and no-longer-exactly-present evidence. `NO_EXACT_MATCH` never claims whether the cause was editing, deletion, truncation, or restructuring.
 
 ```bash
 python examples/north_pier/run_demo.py --output-dir demo-output/north-pier --reset
@@ -230,7 +247,7 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
   --continuity alpha --source-key north-pier-field-log
 ```
 
-The v0.3.0a1 development tree can inspect the imported revisions with the `source-impact` syntax above. The report is metadata-only and remains an unreleased alpha schema. Demo data licensing is documented in [Demo Licenses](docs/DEMO_LICENSES.md).
+The v0.3.0a2 development tree can inspect the imported revisions with the `source-impact` syntax above. The report is metadata-only and remains an unreleased alpha schema. Demo data licensing is documented in [Demo Licenses](docs/DEMO_LICENSES.md).
 
 ## Documentation
 

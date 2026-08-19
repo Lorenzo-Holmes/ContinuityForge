@@ -181,9 +181,9 @@ def test_read_only_commands_do_not_create_a_missing_database_or_leak_path(
 
     error = _captured_json(capsys, stderr=True)
     assert error["schema"] == "continuityforge.error/v0.3"
-    assert error["code"] == "NOT_FOUND"
+    assert error["code"] == "DATABASE_NOT_FOUND"
     assert str(database) not in error["message"]
-    assert "<DB>" in error["message"]
+    assert error["message"] == "project database not found"
     assert not database.exists()
     assert not database.parent.exists()
 
@@ -194,7 +194,7 @@ def test_migrate_requires_an_existing_database(tmp_path, capsys):
     assert main(["--db", str(database), "migrate"]) != 0
 
     error = _captured_json(capsys, stderr=True)
-    assert error["code"] == "NOT_FOUND"
+    assert error["code"] == "DATABASE_NOT_FOUND"
     assert not database.exists()
 
 
@@ -218,6 +218,8 @@ def _event_with_details_args(database, details: str) -> list[str]:
 
 def test_event_details_reject_nonfinite_json_numbers(tmp_path, capsys):
     database = tmp_path / "forge.db"
+    with Storage(database):
+        pass
 
     exit_code = main(_event_with_details_args(database, '{"score": NaN}'))
 
@@ -236,6 +238,8 @@ def test_event_details_reject_duplicate_keys_and_excessive_depth(tmp_path, capsy
         )
     ):
         database = tmp_path / f"forge-{index}.db"
+        with Storage(database):
+            pass
         assert main(_event_with_details_args(database, details)) != 0
         error = _captured_json(capsys, stderr=True)
         assert error["code"] == expected_code

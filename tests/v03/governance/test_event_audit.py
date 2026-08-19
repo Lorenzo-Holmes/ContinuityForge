@@ -4,6 +4,7 @@ import json
 import pytest
 from continuityforge.compiler import MemoryCompiler
 from continuityforge.evidence import build_evidence_ref
+from continuityforge.event_integrity import replay_event_audits, validate_event_audits
 from continuityforge.models import MemoryCutoff, NarrativeEvent
 from continuityforge.validate import ProjectValidator
 
@@ -34,6 +35,20 @@ def test_legitimate_event_audit_replays_and_compiles(storage):
     pack = MemoryCompiler(storage).compile(_cutoff())
     assert [item["id"] for item in pack["events"]] == [event.event_id]
     assert ProjectValidator(storage).validate().is_valid
+
+
+def test_preloaded_event_audit_batch_matches_storage_backed_replay(storage):
+    event, _ = _event_fixture(storage)
+    storage_reports = validate_event_audits(storage, (event,))
+    batch_reports = replay_event_audits(
+        (event,),
+        storage.list_ledger_entries(aggregate_type="narrative_event"),
+        storage.list_all_event_evidence(),
+    )
+
+    assert batch_reports[event.event_id].to_dict() == storage_reports[
+        event.event_id
+    ].to_dict()
 
 
 def test_direct_event_insert_without_ledger_is_excluded(storage):

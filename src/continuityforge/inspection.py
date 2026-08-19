@@ -15,18 +15,25 @@ from .exceptions import (
     InspectionLimitError,
     NotFoundError,
 )
+from .event_integrity import replay_event_audits
 from .governance_integrity import replay_claim_authority
 from .impact import ImpactEngine, PreparedImpactTarget
 from .impact_models import ImpactOutcome, ImpactReport, ImpactTargetError
 from .ingest import DEFAULT_INGEST_LIMITS, source_lines
-from .models import ClaimProposal, EvidenceRef, SourceSnapshot
-from .readonly import ClaimAuthorityMaterial, ProvenanceRecord, ReadOnlyProject
+from .models import ClaimProposal, EvidenceRef, NarrativeEvent, SourceSnapshot
+from .readonly import (
+    ClaimAuthorityMaterial,
+    EventAuditMaterial,
+    ProvenanceRecord,
+    ReadOnlyProject,
+)
 
 
 MAX_SOURCE_REVISIONS = 10_000
 MAX_AFFECTED_EVIDENCE = 10_000
 MAX_REPORT_CANDIDATES = 50_000
 MAX_AUTHORITY_RECORDS = 100_000
+MAX_EVENT_AUDIT_RECORDS = 100_000
 MAX_INSPECTION_MATERIAL_BYTES = 64 * 1024 * 1024
 MAX_LEDGER_ENTRIES = 250_000
 MAX_LEDGER_PAYLOAD_BYTES = 64 * 1024 * 1024
@@ -444,6 +451,12 @@ class InspectionService:
             max_material_bytes=MAX_INSPECTION_MATERIAL_BYTES,
         )
         self._validate_claim_authority(provenance, authority)
+        event_audit = self.repository.get_event_audit_for_snapshot(
+            old_snapshot.snapshot_id,
+            max_records=MAX_EVENT_AUDIT_RECORDS,
+            max_material_bytes=MAX_INSPECTION_MATERIAL_BYTES,
+        )
+        self._validate_event_audit(provenance, event_audit)
 
         prepared_target = PreparedImpactTarget(
             snapshot_id=target_snapshot.snapshot_id,
@@ -625,6 +638,46 @@ class InspectionService:
                     "affected claim authority failed deterministic replay",
                 )
 
+    @staticmethod
+    def _validate_event_audit(
+        provenance: tuple[ProvenanceRecord, ...],
+        material: EventAuditMaterial,
+    ) -> None:
+        """Replay every affected event against its complete bounded audit set."""
+
+        events: dict[str, NarrativeEvent] = {}
+        for record in provenance:
+            if not isinstance(record.aggregate, NarrativeEvent):
+                continue
+            previous = events.setdefault(record.aggregate.event_id, record.aggregate)
+            if previous != record.aggregate:
+                raise InspectionIntegrityError(
+                    "EVENT_AUDIT_INVALID",
+                    "affected narrative event rows are inconsistent",
+                )
+
+        expected_ids = set(events)
+        ledger_ids = {entry.aggregate_id for entry in material.ledger_entries}
+        evidence_ids = {item.event_id for item in material.evidence}
+        if (
+            None in evidence_ids
+            or ledger_ids - expected_ids
+            or evidence_ids - expected_ids
+        ):
+            raise InspectionIntegrityError(
+                "EVENT_AUDIT_INVALID",
+                "affected narrative event audit material is out of scope",
+            )
+
+        reports = replay_event_audits(
+            events.values(), material.ledger_entries, material.evidence
+        )
+        if any(not reports[event_id].is_valid for event_id in sorted(events)):
+            raise InspectionIntegrityError(
+                "EVENT_AUDIT_INVALID",
+                "affected narrative event audit failed deterministic replay",
+            )
+
     def _validated_anchor(
         self,
         record: ProvenanceRecord,
@@ -681,6 +734,7 @@ __all__ = [
     "AffectedEvidence",
     "InspectionService",
     "MAX_AFFECTED_EVIDENCE",
+    "MAX_EVENT_AUDIT_RECORDS",
     "MAX_REPORT_CANDIDATES",
     "MAX_SOURCE_REVISIONS",
     "SourceImpactReport",

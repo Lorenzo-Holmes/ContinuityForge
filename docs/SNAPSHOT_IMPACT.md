@@ -2,8 +2,8 @@
 
 ## Status
 
-- Pure-domain Impact engine: **implemented, unreleased v0.3.0a1**.
-- Storage-aware `ReadOnlyProject`, aggregation service, and `source-impact` CLI: **implemented, unreleased v0.3.0a1**.
+- Pure-domain Impact engine: **implemented, unreleased v0.3.0a2**.
+- Storage-aware `ReadOnlyProject`, aggregation service, and `source-impact` CLI: **implemented, unreleased v0.3.0a2**.
 - Governance mutation from impact: explicitly excluded.
 
 ## Purpose
@@ -57,6 +57,12 @@ If `content_hash` is present, it must be a valid SHA-256 digest of the normalize
 | `INVALID_EVIDENCE` | Supplied evidence fields cannot form a self-consistent exact-match anchor. This is not a complete historical provenance verdict. |
 
 Classification priority is fixed in the table order.
+
+`NO_EXACT_MATCH` proves only that the old exact quote is absent as one
+continuous line sequence in the target snapshot. It does not distinguish an
+edit from deletion, truncation, line splitting/merging, or any other cause.
+Those explanations may be known from a controlled fixture or human review,
+but they are never deterministic Impact outcomes.
 
 ## Candidate search
 
@@ -128,7 +134,7 @@ flowchart LR
 
 No outcome, including `NO_EXACT_MATCH`, automatically changes an `AUTHORIZED` claim. A new source revision may be editorial rather than semantic, and governance remains an explicit human decision.
 
-## Unreleased v0.3.0a1 `source-impact`
+## Unreleased v0.3.0a2 `source-impact`
 
 `source-impact` is implemented in the development tree. It is not released yet, and its JSON shape remains an alpha interface.
 
@@ -149,11 +155,13 @@ The service:
 - load only the selected old/target bodies and intermediate lineage metadata;
 - gather claim and narrative-event evidence referencing the selected old snapshot;
 - recompute endpoint SHA-256/line counts and verify source/continuity lineage;
-- verify the global ledger, replay affected claim authority, and validate old evidence;
+- verify the global ledger, replay affected claim authority and complete affected-event creation audits, and validate old evidence;
 - batch exact-match anchors against the target with a line-token Aho-Corasick scan;
 - aggregate counts and per-aggregate reports;
 - omit complete source bodies and quotes by default;
 - perform no status transition or database mutation.
+
+All endpoint, provenance, claim-authority, event-audit, and matching reads occur inside one pinned SQLite transaction. Event audit is loaded in bounded batches rather than one query per event. If an affected event row, its complete evidence set, or its creation-ledger material diverges, the report fails closed with `EVENT_AUDIT_INVALID`.
 
 ### Inspection resource limits
 
@@ -165,6 +173,7 @@ The alpha fails closed instead of truncating a report. Defaults are:
 | Affected evidence rows | 10,000 |
 | Total candidate spans in one report | 50,000 |
 | Authority records | 100,000 |
+| Affected-event audit records | 100,000 |
 | Ledger entries | 250,000 |
 | Total ledger payload | 64 MiB |
 | One ledger payload | 2 MiB |
@@ -242,6 +251,6 @@ The original [North Pier fixtures](../examples/north_pier/README.md) provide:
 | Arrival line unchanged | `2-2` | `SAME_POSITION` at `2-2` |
 | Register plus locker block shifted | `4-5` | `EXACT_MOVED_UNIQUE` at `5-6` |
 | Maintenance note repeated | `8-8` | `EXACT_MOVED_AMBIGUOUS` at `9-9`, `11-11` |
-| Knowledge statement edited | `6-6` | `NO_EXACT_MATCH` |
+| Old knowledge quote absent in target | `6-6` | `NO_EXACT_MATCH` |
 
 See [Deterministic vs LLM](DETERMINISTIC_VS_LLM.md) for why no model participates in classification.

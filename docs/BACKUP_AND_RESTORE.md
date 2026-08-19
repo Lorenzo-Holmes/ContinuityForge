@@ -2,7 +2,7 @@
 
 ## Status
 
-The unreleased v0.3.0a1 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
+The unreleased v0.3.0a2 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
 
 ```bash
 continuityforge --db project.db migration-check --mode strict
@@ -25,7 +25,10 @@ A migration-grade backup must:
 6. retain the detected schema version and database identity/fingerprint;
 7. have a SHA-256 recorded after close;
 8. emit metadata without embedding source bodies;
-9. remain available until migration and restoration verification complete.
+9. be published without replacing any existing path or following a symbolic-link target;
+10. remain available until migration and restoration verification complete.
+
+The v0.3.0a2 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
 
 ## Alpha backup metadata
 
@@ -50,19 +53,19 @@ A migration-grade backup must:
 }
 ```
 
-The full JSON also contains schema object lists, capacity checks, target fingerprint, timestamps, migrated counts, issues, and quarantine records. The report schema is not frozen until v0.3 release. The backup filename is collision-safe: later runs use `.pre-v3.2.bak`, `.pre-v3.3.bak`, and so on rather than overwriting an existing artifact.
+The full JSON also contains schema object lists, capacity checks, target fingerprint, timestamps, migrated counts, issues, and quarantine records. The report schema is not frozen until v0.3 release. The backup filename is collision-safe: later runs use `.pre-v3.2.bak`, `.pre-v3.3.bak`, and so on rather than overwriting an existing artifact. Backup creation and verification complete before the migration transaction begins.
 
 ## Confidentiality
 
 The report is metadata-first; the backup artifact is not. A backup contains source bodies, evidence quotes, claims, events, and governance history.
 
-- store it with restrictive filesystem permissions;
+- retain the restrictive permissions created by the migration path and protect the containing directory/ACL;
 - use operating-system or external encryption when required;
 - do not attach it to a public issue;
 - do not log its source content;
 - define retention and secure deletion outside ContinuityForge.
 
-ContinuityForge does not currently provide encryption or key management.
+ContinuityForge does not currently provide encryption, key management, ACL administration, or secure deletion.
 
 ## Restore-before-activate workflow
 
@@ -119,6 +122,6 @@ Treat the artifact as unusable. Create a new consistent backup from a verified s
 
 ## Operational ownership
 
-The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a1 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
+The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a2 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
 
 See [Migration v3](MIGRATION_V3.md) and [Threat Model](THREAT_MODEL.md).

@@ -20,6 +20,14 @@ class SchemaError(ContinuityForgeError):
     """The database schema is unsupported or cannot be migrated safely."""
 
 
+class DatabaseNotFoundError(SchemaError):
+    """An existing-database command was given no regular database file."""
+
+
+class ExplicitMigrationRequiredError(SchemaError):
+    """A legacy database must be upgraded by the explicit migrate command."""
+
+
 class MigrationError(SchemaError):
     """A schema migration failed its fail-closed gate."""
 

@@ -12,12 +12,16 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 
-EXPECTED_VERSION = "0.3.0a1"
+EXPECTED_VERSION = "0.3.0a2"
 FORBIDDEN_SUFFIXES = {
+    ".bak",
+    ".backup",
     ".db",
     ".env",
     ".key",
+    ".p12",
     ".pem",
+    ".pfx",
     ".pyc",
     ".pyo",
     ".sqlite",
@@ -26,10 +30,16 @@ FORBIDDEN_SUFFIXES = {
 FORBIDDEN_PARTS = {
     ".git",
     ".github",
+    ".mypy_cache",
     ".pytest_cache",
+    ".ruff_cache",
     ".venv",
+    ".venv-release",
     "__pycache__",
+    "build",
+    "dist",
     "htmlcov",
+    "tests",
 }
 FORBIDDEN_NAMES = {
     ".coverage",
@@ -54,9 +64,22 @@ def _assert_safe_members(members: list[str]) -> None:
     assert members
     for member in members:
         path = PurePosixPath(member.replace("\\", "/"))
+        filename = path.name.lower()
         assert not (set(path.parts) & FORBIDDEN_PARTS), member
-        assert path.name.lower() not in FORBIDDEN_NAMES, member
+        assert filename not in FORBIDDEN_NAMES, member
+        assert not filename.startswith(".env."), member
         assert path.suffix.lower() not in FORBIDDEN_SUFFIXES, member
+        assert not any(
+            marker in filename
+            for marker in (
+                ".db-",
+                ".db.",
+                ".sqlite-",
+                ".sqlite.",
+                ".sqlite3-",
+                ".sqlite3.",
+            )
+        ), member
         assert "secret" not in path.name.lower(), member
 
 
@@ -116,3 +139,32 @@ def test_source_archive_is_clean_and_versioned() -> None:
     with tarfile.open(archives[0], "r:gz") as archive:
         members = [member.name for member in archive.getmembers()]
     _assert_safe_members(members)
+    root = f"continuityforge-{EXPECTED_VERSION}/"
+    required = {
+        root + "CHANGELOG.md",
+        root + "CODE_OF_CONDUCT.md",
+        root + "CONTRIBUTING.md",
+        root + "LICENSE",
+        root + "README.md",
+        root + "SECURITY.md",
+        root + "LICENSES/NORTH_PIER_DEMO.md",
+        root + "LICENSES/README.md",
+        root + "docs/ARCHITECTURE.md",
+        root + "docs/BACKUP_AND_RESTORE.md",
+        root + "docs/DATA_MODEL.md",
+        root + "docs/DEMO_LICENSES.md",
+        root + "docs/DETERMINISTIC_VS_LLM.md",
+        root + "docs/MIGRATION_V3.md",
+        root + "docs/SECURITY_TESTING.md",
+        root + "docs/SNAPSHOT_IMPACT.md",
+        root + "docs/THREAT_MODEL.md",
+        root + "docs/V0_1_BASELINE.md",
+        root + "docs/V0_2_DESIGN.md",
+        root + "docs/V0_3_DECISIONS.md",
+        root + "examples/north_pier/README.md",
+        root + "examples/north_pier/impact-cases.json",
+        root + "examples/north_pier/north_pier_v1.txt",
+        root + "examples/north_pier/north_pier_v2.txt",
+        root + "examples/north_pier/run_demo.py",
+    }
+    assert required <= set(members)

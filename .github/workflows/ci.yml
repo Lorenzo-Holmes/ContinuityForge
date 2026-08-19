@@ -66,7 +66,7 @@ jobs:
           --cov=continuityforge
           --cov-report=term-missing
           --cov-report=xml
-          --cov-fail-under=70
+          --cov-fail-under=75
       - name: Compile source and tests
         run: python -m compileall -q src tests
 
@@ -95,21 +95,33 @@ jobs:
       - name: Install wheel in a clean environment
         run: |
           python -m venv .wheel-venv
-          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a1
-          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a1"
+          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a2
+          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a2"
           .wheel-venv/bin/continuityforge source-impact --help
           .wheel-venv/bin/continuityforge migration-check --help
           .wheel-venv/bin/continuityforge migrate --help
           .wheel-venv/bin/continuityforge demo --output-dir .tmp-demo/wheel --reset
           test -f .tmp-demo/wheel/alpha-jan-02.pack.json
           test -f .tmp-demo/wheel/continuityforge-demo.db
-          .wheel-venv/bin/python examples/north_pier/run_demo.py --output-dir .tmp-demo/north-pier --reset
-          test -f .tmp-demo/north-pier/north-pier-impact-report.json
-          test -f .tmp-demo/north-pier/north-pier-demo.db
+      - name: Run North Pier from the unpacked source archive
+        run: |
+          mkdir .sdist-smoke
+          tar -xzf dist/continuityforge-0.3.0a2.tar.gz -C .sdist-smoke
+          SDIST_ROOT="$PWD/.sdist-smoke/continuityforge-0.3.0a2"
+          test -f "$SDIST_ROOT/examples/north_pier/run_demo.py"
+          (
+            cd "$RUNNER_TEMP"
+            "$GITHUB_WORKSPACE/.wheel-venv/bin/python" \
+              "$SDIST_ROOT/examples/north_pier/run_demo.py" \
+              --output-dir "$RUNNER_TEMP/north-pier" \
+              --reset
+          )
+          test -f "$RUNNER_TEMP/north-pier/north-pier-impact-report.json"
+          test -f "$RUNNER_TEMP/north-pier/north-pier-demo.db"
       - name: Upload distributions
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: continuityforge-0.3.0a1
+          name: continuityforge-0.3.0a2
           path: dist/
           if-no-files-found: error
           retention-days: 14

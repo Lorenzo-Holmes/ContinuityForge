@@ -19,7 +19,7 @@ The demo is intentionally small and transparent. It exercises:
 - one unchanged evidence span;
 - one uniquely moved multiline span;
 - one repeated span with ambiguous exact destinations;
-- one edited span with no exact destination;
+- one old exact quote absent from the target (the fixture author changed it, but the engine does not infer a cause);
 - claim-owned and operator-event-owned evidence descriptors.
 
 The machine-readable case file is a demonstration expectation manifest, not a frozen import or CLI output schema.

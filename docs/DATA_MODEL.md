@@ -6,7 +6,7 @@
 - v0.2 introduces logical sources, immutable versions, proposal governance, narrative events, and EventLedger.
 - v0.3 adds stricter authority/migration invariants and read-only impact/inspection reports without changing snapshot history automatically.
 
-Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a1 development tree. Report values are transient and need not be persisted.
+Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a2 development tree. Report values are transient and need not be persisted.
 
 ## Entity overview
 
@@ -174,7 +174,7 @@ A frozen, non-persisted-by-default exact-match result:
 
 It excludes the quote and complete source body by default and has no authority to mutate claim status.
 
-## Inspection and migration reports (v0.3.0a1)
+## Inspection and migration reports (v0.3.0a2)
 
 `SourceImpactReport` aggregates:
 
@@ -184,7 +184,7 @@ It excludes the quote and complete source body by default and has no authority t
 - claim governance status and per-outcome counts;
 - schema marker `continuityforge.source-impact/v0.3-alpha` and an always-true `report_only` marker.
 
-`ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the ledger plus affected-claim authority before exposing materialized governance status.
+`ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the global ledger, affected-claim authority, and complete audit material for every affected event before returning a report. Event-audit divergence fails closed as `EVENT_AUDIT_INVALID` rather than exposing an unaudited event anchor.
 
 `MigrationReport` carries:
 

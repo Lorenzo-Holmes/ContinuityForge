@@ -97,12 +97,27 @@ def test_source_impact_covers_claims_events_and_four_exact_outcomes(
             source_id, continuity="alpha", from_version=1, to_version=2
         )
         project.connection.set_trace_callback(None)
-        selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+        reads = [
+            sql
+            for sql in statements
+            if sql.lstrip().upper().startswith(("SELECT", "WITH"))
+        ]
         # Endpoint bodies, metadata-only lineage, bounded provenance counts,
-        # global ledger verification, and bulk authority replay all use a
-        # fixed query plan.  Aggregate/evidence count never creates N+1 reads.
-        assert len(selects) == 14
-        assert len([sql for sql in selects if sql.startswith("SELECT ss.*")]) == 1
+        # global ledger verification, claim authority, and event audit replay
+        # all use a fixed query plan.  Aggregate/evidence count never creates
+        # N+1 reads.
+        assert len(reads) == 17
+        assert len([sql for sql in reads if sql.startswith("SELECT ss.*")]) == 1
+        assert (
+            len(
+                [
+                    sql
+                    for sql in reads
+                    if sql.lstrip().upper().startswith("WITH AFFECTED(EVENT_ID)")
+                ]
+            )
+            == 3
+        )
 
 
 def test_source_impact_rejects_cross_source_and_cross_continuity(

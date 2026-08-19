@@ -3,9 +3,9 @@
 ## Status vocabulary
 
 - **Released:** available in v0.2.0.
-- **Implemented, unreleased:** present in the v0.3.0a1 development code and tests.
+- **Implemented, unreleased:** present in the v0.3.0a2 development code and tests.
 - **Accepted contract:** approved in [V0_3_DECISIONS.md](V0_3_DECISIONS.md); integration may still be in progress.
-- **Deferred:** intentionally outside v0.3.0a1.
+- **Deferred:** intentionally outside v0.3.0a2.
 
 ## System context
 
@@ -71,7 +71,7 @@ Because `EvidenceRef` does not carry logical-source lineage, this two-value engi
 
 ### Governance and authority integrity
 
-Governance records explicit status transitions. Authorization rechecks evidence and deterministic conflicts. v0.3 authority integrity verifies that an `AUTHORIZED` materialized status is backed by a complete decision, evidence-set, and ledger chain before compilation. Operator-authored `NarrativeEvent` rows and their evidence sets are likewise bound to exactly one creation ledger record.
+Governance records explicit status transitions. Authorization rechecks evidence and deterministic conflicts. v0.3 authority integrity verifies that an `AUTHORIZED` materialized status is backed by a complete decision, evidence-set, and ledger chain before compilation. Operator-authored `NarrativeEvent` rows and their complete evidence sets are likewise bound to exactly one creation ledger record. Compiler, validator, and impact inspection replay the same event-audit rule before trusting an event.
 
 ### SQLite storage
 
@@ -83,7 +83,7 @@ The compiler reads only eligible, authorized values and applies exact persona, c
 
 ### CLI and adapters
 
-The v0.2 CLI is released. The development tree also implements the unreleased `source-impact`, `migration-check`, and `migrate` alpha commands. They are tested but must not be treated as stable automation interfaces before v0.3 release. Restore and deployment activation remain operator workflows.
+The v0.2 CLI is released. The development tree also implements the unreleased `source-impact`, `migration-check`, and `migrate` alpha commands. Each command declares one database lifecycle: create-capable, write-existing, read-existing, or explicit-migrate. Only `ingest` and `demo` may create a database; only `migrate` may upgrade a recognized legacy database. Read commands never acquire writable `Storage` merely to inspect a path. These interfaces are tested but must not be treated as stable automation contracts before v0.3 release. Restore and deployment activation remain operator workflows.
 
 ## Write path
 
@@ -122,7 +122,7 @@ sequenceDiagram
 
     C->>IS: old evidence + target version request
     IS->>S: resolve endpoint bodies + lineage metadata
-    IS->>IS: verify hashes, line counts, lineage, ledger, authority
+    IS->>IS: verify hashes, line counts, lineage, ledger, claim authority, event audit
     IS->>EV: revalidate old evidence against old snapshot
     IS->>IM: evidence + resolved target snapshot
     IM-->>IS: frozen exact-match report
@@ -142,11 +142,13 @@ Impact is report-only. The inspection path has no authority to change claim stat
 | `AUTHORIZED` requires evidence/conflict checks | Governance service |
 | Materialized authority has decision/evidence/ledger backing | v0.3 authority integrity |
 | Operator event and evidence have one matching audit record | v0.3 event integrity |
+| Compiler, validator, and inspection agree on event-audit validity | Shared deterministic event-audit replay |
 | One compile/inspection never mixes concurrent database states | Pinned read transactions |
 | `human_only` does not enter default agent packs | Compiler access filter |
 | Future knowledge does not enter an earlier cutoff | Compiler knowledge-time filter |
 | Impact never mutates governance | Impact/inspection architecture |
 | Migration cannot broaden malformed legacy authority/access | Schema-v3 fail-closed contract |
+| Ordinary commands cannot initialize or migrate a legacy path as a side effect | Explicit CLI database lifecycles |
 
 ## Time model
 

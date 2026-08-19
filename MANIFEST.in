@@ -1,0 +1,23 @@
+include CHANGELOG.md
+include CODE_OF_CONDUCT.md
+include CONTRIBUTING.md
+include LICENSE
+include README.md
+include SECURITY.md
+recursive-include LICENSES *.md
+recursive-include docs *.md
+recursive-include examples/north_pier *.json *.md *.py *.txt
+prune .github
+prune .mypy_cache
+prune .pytest_cache
+prune .ruff_cache
+prune .venv
+prune .venv-release
+prune build
+prune dist
+prune tests
+global-exclude *.bak *.backup *.db *.db-* *.db.*
+global-exclude *.sqlite *.sqlite-* *.sqlite.* *.sqlite3 *.sqlite3-* *.sqlite3.*
+global-exclude .env .env.* *.env *.key *.p12 *.pem *.pfx
+global-exclude .netrc .npmrc .pypirc credentials.json id_ed25519 id_rsa
+global-exclude *.py[cod] __pycache__ .coverage .coverage.* coverage.xml

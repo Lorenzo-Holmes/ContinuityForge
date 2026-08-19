@@ -46,7 +46,8 @@
       ]
     },
     {
-      "case_id": "knowledge-edited",
+      "case_id": "knowledge-old-exact-quote-absent",
+      "demo_scenario_note": "The fixture author edited this sentence; the deterministic engine proves only that the old exact quote is absent.",
       "owner_type": "claim",
       "owner_id": "DEMO_CLAIM_KNOWLEDGE",
       "original_span": {"start_line": 6, "end_line": 6},

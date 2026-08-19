@@ -87,7 +87,7 @@ Migration is a deterministic transformation of known schemas. An LLM must not:
 - repair a broken ledger;
 - choose which conflicting record to retain.
 
-Strict mode stops. In v0.3.0a1, explicit quarantine retains malformed v0.1 rows only in legacy storage and creates no active mapping for them; malformed v0.2 data still stops. No model participates in that decision.
+Strict mode stops. In v0.3.0a2, explicit quarantine retains malformed v0.1 rows only in legacy storage and creates no active mapping for them; malformed v0.2 data still stops. No model participates in that decision.
 
 ## Confidence is not authority
 
