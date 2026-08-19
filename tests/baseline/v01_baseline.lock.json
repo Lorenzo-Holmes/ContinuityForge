@@ -1,0 +1,9 @@
+{
+  "algorithm": "sha256",
+  "contract": "continuityforge/v0.1-baseline-lock",
+  "files": {
+    "docs/V0_1_BASELINE.md": "e29f76e4b37e786e90b7cc4704a30cdba3f3a5c4e2fea8b029bd270d34d88220",
+    "tests/baseline/v01_contract.json": "31137494c9eb2b1486d13e6df6ff48c79e375651a3f794b6a9baae7c772f3ee7",
+    "tests/baseline/v01_schema.sql": "8e47485f57245cc6c27335aaa94d74b01b6b13dd4c6d93821391dcee38a05712"
+  }
+}

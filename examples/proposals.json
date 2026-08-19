@@ -1,0 +1,81 @@
+{
+  "schema": "continuityforge.claim-proposals/v0.2",
+  "description": "Synthetic LLM output. Every item remains PROPOSED until evidence validation and governance review succeed.",
+  "proposals": [
+    {
+      "persona_id": "mira",
+      "continuity": "alpha",
+      "text": "The brass compass is sealed inside Locker Seven.",
+      "subject": "brass-compass",
+      "predicate": "stored_in",
+      "object_value": "locker-seven",
+      "valid_from": "2026-01-01T18:00:00Z",
+      "knowledge_from": "2026-01-01T18:00:00Z",
+      "access_policy": "agent_accessible",
+      "confidence": 0.98,
+      "status": "PROPOSED",
+      "proposed_by": "llm:MODEL_PROVIDER",
+      "proposal_model": "MODEL",
+      "rationale": "The cited line explicitly states the storage action and location.",
+      "evidence": [
+        {
+          "snapshot_id": "SNAPSHOT_ID_ALPHA",
+          "start_line": 4,
+          "end_line": 4,
+          "quote": "At sunset, Rowan sealed the compass inside Locker Seven.",
+          "content_hash": "c572a1b9c861b60b14958a8a32be32ba4c4a2df108e3d976deb39fd66a5304e8"
+        }
+      ]
+    },
+    {
+      "persona_id": "mira",
+      "continuity": "alpha",
+      "text": "Locker Seven opens with archive code 4319.",
+      "subject": "locker-seven",
+      "predicate": "archive_code",
+      "object_value": "4319",
+      "valid_from": "2026-01-03T00:00:00Z",
+      "knowledge_from": "2026-01-03T00:00:00Z",
+      "access_policy": "agent_accessible",
+      "confidence": 0.99,
+      "status": "PROPOSED",
+      "proposed_by": "llm:MODEL_PROVIDER",
+      "proposal_model": "MODEL",
+      "rationale": "The line states both the locker and code, but the knowledge date must remain January 3.",
+      "evidence": [
+        {
+          "snapshot_id": "SNAPSHOT_ID_ALPHA",
+          "start_line": 5,
+          "end_line": 5,
+          "quote": "2026-01-03 — Rowan told Mira that Locker Seven opens with archive code 4319.",
+          "content_hash": "b469a360495099a08a07314edde5e38486cc9fd21b4bbee5fe454175cfd2ecf2"
+        }
+      ]
+    },
+    {
+      "persona_id": "mira",
+      "continuity": "beta",
+      "text": "The silver astrolabe was returned to Mira and was not placed in a locker.",
+      "subject": "silver-astrolabe",
+      "predicate": "returned_to",
+      "object_value": "mira",
+      "valid_from": "2026-01-01T18:00:00Z",
+      "knowledge_from": "2026-01-01T18:00:00Z",
+      "access_policy": "agent_accessible",
+      "confidence": 0.96,
+      "status": "PROPOSED",
+      "proposed_by": "llm:MODEL_PROVIDER",
+      "proposal_model": "MODEL",
+      "rationale": "This intentionally separate Beta claim demonstrates continuity isolation.",
+      "evidence": [
+        {
+          "snapshot_id": "SNAPSHOT_ID_BETA",
+          "start_line": 4,
+          "end_line": 4,
+          "quote": "At sunset, Rowan returned the astrolabe to Mira; no locker was used.",
+          "content_hash": "4fa579133f531bc3f3e010218ca65704ac90df6c80b6234c9ae4a8d5ffa57383"
+        }
+      ]
+    }
+  ]
+}

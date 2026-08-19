@@ -1,0 +1,40 @@
+{
+  "contract": "continuityforge/v0.1-baseline",
+  "frozen_at": "2026-08-19",
+  "commands": [
+    "ingest",
+    "claim-add",
+    "validate",
+    "compile"
+  ],
+  "source_formats": [
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+    ".srt"
+  ],
+  "required_claim_fields": [
+    "persona_id",
+    "continuity",
+    "claim",
+    "valid_from",
+    "valid_until",
+    "knowledge_from",
+    "knowledge_until",
+    "visibility",
+    "confidence",
+    "status",
+    "source_id",
+    "source_span"
+  ],
+  "invariants": [
+    "A compiled pack contains only the requested persona_id.",
+    "A compiled pack contains only the requested continuity.",
+    "Claims learned after MemoryCutoff are excluded.",
+    "human_only and hidden claims are excluded from agent packs.",
+    "Every compiled claim has a resolvable source snapshot and line span.",
+    "Source-less, out-of-range, and cross-continuity evidence is rejected.",
+    "Contradictory facts in the same continuity are reported."
+  ]
+}
