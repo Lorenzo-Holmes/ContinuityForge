@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,6 +86,7 @@ class CoverageGateReport:
     trusted_branches: GateResult
     critical_branches: tuple[GateResult, ...]
     critical_files: tuple[GateResult, ...]
+    critical_file_minimums: tuple[GateResult, ...]
 
     @property
     def results(self) -> tuple[GateResult, ...]:
@@ -94,6 +96,7 @@ class CoverageGateReport:
             self.trusted_branches,
             *self.critical_branches,
             *self.critical_files,
+            *self.critical_file_minimums,
         )
 
     @property
@@ -277,6 +280,50 @@ def _parse_critical_branch(specification: str) -> tuple[str, tuple[int, int]]:
     return _normalise_path(raw_path), (source, destination)
 
 
+def _minimum_percentage(raw_value: str, *, label: str) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as error:
+        raise CoverageInputError(f"{label} must be a percentage") from error
+    if not math.isfinite(value) or value <= 0.0 or value > 100.0:
+        raise CoverageInputError(f"{label} must be greater than 0 and at most 100")
+    return value
+
+
+def _parse_critical_file_minimum(specification: str) -> tuple[str, float, float]:
+    """Parse PATH:STATEMENTS[:BRANCHES], normalizing one repository path.
+
+    The two-field spelling applies one minimum to both metrics.  The three-field
+    spelling permits a stricter statement target without pretending that
+    statement and pure-branch coverage are the same measurement.
+    """
+
+    if not isinstance(specification, str):
+        raise CoverageInputError(
+            "critical file minimum must be PATH:STATEMENTS[:BRANCHES]"
+        )
+    parts = specification.rsplit(":", 2)
+    if len(parts) == 2:
+        raw_path, raw_statements = parts
+        raw_branches = raw_statements
+    elif len(parts) == 3:
+        raw_path, raw_statements, raw_branches = parts
+    else:
+        raise CoverageInputError(
+            "critical file minimum must be PATH:STATEMENTS[:BRANCHES]"
+        )
+    if not raw_path:
+        raise CoverageInputError("critical file minimum path must not be empty")
+    path = _normalise_path(raw_path)
+    statements = _minimum_percentage(
+        raw_statements, label="critical file statement minimum"
+    )
+    branches = _minimum_percentage(
+        raw_branches, label="critical file branch minimum"
+    )
+    return path, statements, branches
+
+
 def _line_numbers(entry: Mapping[str, Any], field: str) -> set[int]:
     raw_lines = entry.get(field)
     if not isinstance(raw_lines, list):
@@ -318,6 +365,7 @@ def evaluate_coverage(
     trusted_branch_minimum: float = TRUSTED_BRANCH_MINIMUM,
     critical_branches: Sequence[str] = (),
     critical_files: Sequence[str] = (),
+    critical_file_minimums: Sequence[str] = (),
 ) -> CoverageGateReport:
     """Evaluate release gates without invoking Coverage.py itself."""
     _validate_metadata(payload)
@@ -385,12 +433,61 @@ def evaluate_coverage(
             raise CoverageInputError(f"critical file has no branch opportunities: {path}")
         file_results.append(_gate(f"critical file {path}", covered, total, 100.0))
 
+    file_minimum_results: list[GateResult] = []
+    minimum_paths: set[str] = set()
+    for specification in critical_file_minimums:
+        path, statement_minimum, branch_minimum = _parse_critical_file_minimum(
+            specification
+        )
+        if path in minimum_paths:
+            raise CoverageInputError(
+                f"critical file minimum path is specified more than once: {path}"
+            )
+        minimum_paths.add(path)
+        entry = files.get(path)
+        if entry is None:
+            raise CoverageInputError(
+                f"critical file minimum is absent from coverage JSON: {path}"
+            )
+        summary = entry["summary"]
+        covered_lines = _summary_counts(summary, "covered_lines")
+        statements = _summary_counts(summary, "num_statements")
+        if statements == 0:
+            raise CoverageInputError(
+                f"critical file minimum has no statement opportunities: {path}"
+            )
+        covered_branches = _summary_counts(summary, "covered_branches")
+        total_branches = covered_branches + _summary_counts(
+            summary, "missing_branches"
+        )
+        if total_branches == 0:
+            raise CoverageInputError(
+                f"critical file minimum has no branch opportunities: {path}"
+            )
+        file_minimum_results.extend(
+            (
+                _gate(
+                    f"critical file statements {path}",
+                    covered_lines,
+                    statements,
+                    statement_minimum,
+                ),
+                _gate(
+                    f"critical file pure branches {path}",
+                    covered_branches,
+                    total_branches,
+                    branch_minimum,
+                ),
+            )
+        )
+
     return CoverageGateReport(
         combined=combined,
         global_branches=global_branches,
         trusted_branches=trusted_branches,
         critical_branches=tuple(branch_results),
         critical_files=tuple(file_results),
+        critical_file_minimums=tuple(file_minimum_results),
     )
 
 
@@ -414,6 +511,16 @@ def _parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="require every branch in one P0/P1 file to be covered (repeatable)",
     )
+    parser.add_argument(
+        "--critical-file-min",
+        action="append",
+        default=[],
+        metavar="PATH:STATEMENTS[:BRANCHES]",
+        help=(
+            "require per-file statement and pure-branch minimums; a single "
+            "percentage applies to both metrics (repeatable)"
+        ),
+    )
     return parser
 
 
@@ -431,6 +538,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trusted_branch_minimum=args.trusted_branch_minimum,
             critical_branches=args.critical_branch,
             critical_files=args.critical_file,
+            critical_file_minimums=args.critical_file_min,
         )
     except (CoverageInputError, OSError, json.JSONDecodeError) as error:
         print(f"COVERAGE INPUT ERROR: {error}", file=sys.stderr)

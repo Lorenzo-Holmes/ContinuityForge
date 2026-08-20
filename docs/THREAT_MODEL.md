@@ -170,6 +170,23 @@ Review explicit exports before sharing them.
 - model-provider security;
 - HTTP, MCP, or hosted transport attacks.
 
+## Release provenance boundary
+
+The v0.3.0a5 development pipeline installs build and test tools from exact
+SHA-256 lock files, records the complete installed distribution set and
+deterministic environment variables, builds without an independently resolved
+PEP 517 environment, and binds the produced artifacts to the exact Git commit
+and root tree. The provenance verifier reconstructs the canonical source ZIP
+from Git objects and requires complete byte equality, in addition to checking
+the wheel, sdist, provenance, and fixed-order checksum manifest.
+
+This detects accidental dirty-worktree inclusion, artifact substitution,
+unlocked Python packages, and a source ZIP that differs from the recorded Git
+tree. GitHub Actions, the pinned action implementations, Git object storage,
+the package index serving a file with the locked digest, and the maintainer's
+release/tag authority remain trust roots. The manifest is hash-bound but is not
+a maintainer signature, transparency-log proof, or external timestamp.
+
 ## Review triggers
 
 Revisit this model when adding a network transport, multi-user access, provider SDK, automatic event proposal, semantic impact, encrypted storage, signed checkpoints, or a new report that can return source content.

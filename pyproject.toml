@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuityforge"
-version = "0.3.0a4"
+version = "0.3.0a5"
 description = "Compile source texts into provenance-aware, timeline-safe memory packs for long-lived AI personas."
 readme = "README.md"
 requires-python = ">=3.10"

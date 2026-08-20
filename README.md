@@ -11,10 +11,32 @@ ContinuityForge is a local, dependency-light compiler above RAG and memory store
 - **v0.1:** frozen observable compatibility baseline.
 - **v0.2.0:** current stable CLI, SQLite, governance, ledger, and Memory Pack workflow.
 - **v0.3.0a4:** current alpha pre-release under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
+- **v0.3.0a5 (development):** release-only hardening for CI-generated source provenance, Audit Material rejection-path coverage, and a hash-locked build/test toolchain; it does not change the v0.3 database or machine contracts.
 
 The v0.1 and v0.2 contracts remain intact in the v0.3.0a4 alpha pre-release.
 The documented v0.3 command, stream, exit-code, and machine-report contracts
 are frozen and tested, but remain pre-release interfaces until stable v0.3.
+
+### v0.3.0a5 release provenance
+
+The development release pipeline builds a wheel, a PyPA sdist, and a full
+repository source ZIP from the exact Git commit. `release-provenance.json`
+binds those artifacts to the commit, root tree, CI run, and hash-locked build
+environment. `SHA256SUMS` is ordered wheel, sdist, source ZIP, provenance.
+After obtaining the referenced Git commit and all five release files, verify
+the complete bundle with:
+
+```bash
+python scripts/verify_release_provenance.py \
+  --repo . \
+  --dist-dir dist \
+  --expected-commit COMMIT_SHA \
+  --version 0.3.0a5
+```
+
+The verifier compares the complete source ZIP with a deterministic rebuild
+from the Git tree; the ordinary sdist remains the package-oriented source
+distribution.
 
 ## What ContinuityForge guarantees
 

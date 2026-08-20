@@ -27,7 +27,7 @@ python -m pytest
 python -m compileall -q src tests scripts
 ```
 
-CI runs the coverage-gated suite on Linux with Python 3.10-3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. A separate job builds both distributions, inspects their contents/metadata, installs the wheel in a clean environment, exercises the alpha CLI, runs North Pier from the unpacked sdist rather than the checkout, and publishes a wheel-first/sdist-second `SHA256SUMS` manifest.
+CI runs the coverage-gated suite on Linux with Python 3.10-3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. Every matrix job installs exact, SHA-256-locked build and test dependencies. A separate job records and rechecks the complete locked environment, builds without an unpinned isolated backend, inspects both Python distributions, installs the wheel in a clean environment, exercises the alpha CLI, runs North Pier from the unpacked sdist rather than the checkout, and builds a Git-exact full source ZIP plus release provenance.
 
 ### Coverage and resource-warning gates
 
@@ -37,8 +37,10 @@ Release CI treats both direct `ResourceWarning` and pytest's `PytestUnraisableEx
 - at least 75% global branch coverage;
 - at least 80% branch coverage across trusted modules;
 - 100% for each configured critical branch and critical file.
+- at least 95% statement and 90% pure-branch coverage for `audit_material.py`,
+  with every configured malformed-material rejection arc covered directly.
 
-`scripts/check_coverage.py` enforces the latter three policies from `coverage.json`; CI also asks pytest-cov to fail below the 80% combined threshold. The checker accepts only canonical direct `src/continuityforge/*.py` paths, rejects absolute/dot/empty/nested aliases and duplicate normalized paths, requires Coverage.py JSON format 3, and verifies per-file totals against the global totals. `audit_material.py` is part of the trusted-module gate. The checker is included in the source distribution so an unpacked release can reproduce the policy.
+`scripts/check_coverage.py` enforces the latter four policies from `coverage.json`; CI also asks pytest-cov to fail below the 80% combined threshold. The checker accepts only canonical direct `src/continuityforge/*.py` paths, rejects absolute/dot/empty/nested aliases and duplicate normalized paths, requires Coverage.py JSON format 3, and verifies per-file totals against the global totals. `audit_material.py` is part of the trusted-module and explicit per-file gates. The checker is included in the source distribution so an unpacked release can reproduce the policy.
 
 The v0.1 baseline meta-gate hashes canonical LF bytes and separately admits only the exact CRLF transport form. Mixed line endings and lone carriage returns fail rather than being normalized into an apparently valid baseline.
 
@@ -146,5 +148,10 @@ A v0.3 release candidate is blocked until:
 - default administrative-report redaction tests pass;
 - all v0.3 alpha CLI behavior is implemented, tested, documented, and clearly marked as pre-release;
 - wheel and sdist inspection passes, and North Pier runs from an unpacked sdist against the clean-installed wheel;
-- `SHA256SUMS` contains exactly the wheel and sdist in stable order and both hashes verify;
+- the full source ZIP matches every path, mode, and byte in a deterministic
+  reconstruction of the recorded Git tree;
+- `release-provenance.json` binds the commit, tree, CI run, locked environment,
+  wheel, sdist, and source ZIP;
+- `SHA256SUMS` contains exactly wheel, sdist, source ZIP, and provenance in that
+  stable order and every hash verifies;
 - security-relevant changes receive review against [Threat Model](THREAT_MODEL.md).

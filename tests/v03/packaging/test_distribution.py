@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 
-EXPECTED_VERSION = "0.3.0a4"
+EXPECTED_VERSION = "0.3.0a5"
 FORBIDDEN_SUFFIXES = {
     ".bak",
     ".backup",
@@ -166,7 +166,12 @@ def test_source_archive_is_clean_and_versioned() -> None:
         root + "schemas/error-v0.3.schema.json",
         root + "schemas/migration-report-v0.3.schema.json",
         root + "schemas/source-impact-v0.3.schema.json",
+        root + "requirements/ci-build.txt",
+        root + "requirements/ci-test.txt",
+        root + "scripts/build_source_archive.py",
         root + "scripts/check_coverage.py",
+        root + "scripts/verify_release_environment.py",
+        root + "scripts/verify_release_provenance.py",
         root + "examples/north_pier/README.md",
         root + "examples/north_pier/impact-cases.json",
         root + "examples/north_pier/north_pier_v1.txt",
@@ -189,9 +194,13 @@ def test_source_archive_is_clean_and_versioned() -> None:
 def test_sha256sums_is_complete_ordered_and_correct() -> None:
     dist = _dist_dir()
     checksum_path = dist / "SHA256SUMS"
+    source_archives = sorted(dist.glob("ContinuityForge-v*-source.zip"))
+    assert len(source_archives) == 1
     expected_names = [
         f"continuityforge-{EXPECTED_VERSION}-py3-none-any.whl",
         f"continuityforge-{EXPECTED_VERSION}.tar.gz",
+        source_archives[0].name,
+        "release-provenance.json",
     ]
     lines = checksum_path.read_text(encoding="ascii").splitlines()
     assert len(lines) == len(expected_names)

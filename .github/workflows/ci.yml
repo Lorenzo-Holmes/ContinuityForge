@@ -19,7 +19,9 @@ concurrency:
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_INPUT: "1"
+  PYTHONHASHSEED: "0"
   PYTHONDONTWRITEBYTECODE: "1"
+  TZ: UTC
 
 jobs:
   test:
@@ -58,8 +60,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: |
+            requirements/ci-build.txt
+            requirements/ci-test.txt
       - name: Install test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/ci-build.txt
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/ci-test.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
       - name: Run tests with coverage gate
         run: >-
           python -W error::ResourceWarning -m pytest
@@ -87,6 +96,22 @@ jobs:
           --critical-branch src/continuityforge/readonly.py:986:1035
           --critical-branch src/continuityforge/readonly.py:1027:1031
           --critical-branch src/continuityforge/readonly.py:1027:1035
+          --critical-file-min src/continuityforge/audit_material.py:95:90
+          --critical-branch src/continuityforge/audit_material.py:66:67
+          --critical-branch src/continuityforge/audit_material.py:71:72
+          --critical-branch src/continuityforge/audit_material.py:77:78
+          --critical-branch src/continuityforge/audit_material.py:81:83
+          --critical-branch src/continuityforge/audit_material.py:239:240
+          --critical-branch src/continuityforge/audit_material.py:244:245
+          --critical-branch src/continuityforge/audit_material.py:246:247
+          --critical-branch src/continuityforge/audit_material.py:248:249
+          --critical-branch src/continuityforge/audit_material.py:262:263
+          --critical-branch src/continuityforge/audit_material.py:264:265
+          --critical-branch src/continuityforge/audit_material.py:266:267
+          --critical-branch src/continuityforge/audit_material.py:284:285
+          --critical-branch src/continuityforge/audit_material.py:288:289
+          --critical-branch src/continuityforge/audit_material.py:290:291
+          --critical-branch src/continuityforge/audit_material.py:293:294
       - name: Compile source and tests
         run: python -m compileall -q src tests scripts
 
@@ -104,19 +129,38 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            requirements/ci-build.txt
+            requirements/ci-test.txt
+      - name: Set deterministic release environment
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Install build dependencies
-        run: python -m pip install build pytest
-      - name: Build wheel and source archive
-        run: python -m build
-      - name: Generate stable distribution checksums
         run: |
-          (
-            cd dist
-            sha256sum \
-              continuityforge-0.3.0a4-py3-none-any.whl \
-              continuityforge-0.3.0a4.tar.gz \
-              > SHA256SUMS
-          )
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/ci-build.txt
+          python -m pip install --require-hashes --only-binary=:all: -r requirements/ci-test.txt
+          python -m pip check
+      - name: Record the verified release environment
+        run: python scripts/verify_release_environment.py --record "$RUNNER_TEMP/release-environment.json"
+      - name: Build wheel and PyPA source distribution
+        run: python -m build --no-isolation
+      - name: Confirm the build did not mutate the release environment
+        run: python scripts/verify_release_environment.py --check "$RUNNER_TEMP/release-environment.json"
+      - name: Build and verify full-source provenance
+        run: |
+          python scripts/build_source_archive.py \
+            --repo . \
+            --commit "$GITHUB_SHA" \
+            --expected-commit "$GITHUB_SHA" \
+            --version 0.3.0a5 \
+            --dist-dir dist \
+            --wheel dist/continuityforge-0.3.0a5-py3-none-any.whl \
+            --sdist dist/continuityforge-0.3.0a5.tar.gz \
+            --environment-report "$RUNNER_TEMP/release-environment.json"
+          python scripts/verify_release_provenance.py \
+            --repo . \
+            --dist-dir dist \
+            --expected-commit "$GITHUB_SHA" \
+            --version 0.3.0a5
       - name: Inspect distribution contents and metadata
         env:
           CONTINUITYFORGE_DIST_DIR: dist
@@ -124,8 +168,8 @@ jobs:
       - name: Install wheel in a clean environment
         run: |
           python -m venv .wheel-venv
-          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a4
-          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a4"
+          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a5
+          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a5"
           .wheel-venv/bin/continuityforge source-impact --help
           .wheel-venv/bin/continuityforge migration-check --help
           .wheel-venv/bin/continuityforge migrate --help
@@ -135,8 +179,8 @@ jobs:
       - name: Run North Pier from the unpacked source archive
         run: |
           mkdir .sdist-smoke
-          tar -xzf dist/continuityforge-0.3.0a4.tar.gz -C .sdist-smoke
-          SDIST_ROOT="$PWD/.sdist-smoke/continuityforge-0.3.0a4"
+          tar -xzf dist/continuityforge-0.3.0a5.tar.gz -C .sdist-smoke
+          SDIST_ROOT="$PWD/.sdist-smoke/continuityforge-0.3.0a5"
           test -f "$SDIST_ROOT/examples/north_pier/run_demo.py"
           (
             cd "$RUNNER_TEMP"
@@ -150,10 +194,12 @@ jobs:
       - name: Upload distributions
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: continuityforge-0.3.0a4
+          name: continuityforge-0.3.0a5
           path: |
-            dist/continuityforge-0.3.0a4-py3-none-any.whl
-            dist/continuityforge-0.3.0a4.tar.gz
+            dist/continuityforge-0.3.0a5-py3-none-any.whl
+            dist/continuityforge-0.3.0a5.tar.gz
+            dist/ContinuityForge-v0.3.0a5-*-source.zip
+            dist/release-provenance.json
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

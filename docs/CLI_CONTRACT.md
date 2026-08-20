@@ -157,8 +157,13 @@ the exact three paths are present. Schema validation tests require
 `jsonschema>=4,<5` in the development/test dependency set. Release automation
 must not publish an sdist that fails either assertion.
 
-The sdist also includes `scripts/check_coverage.py`, allowing the release
-coverage policy to be reproduced from a Coverage.py JSON format-3 report with
-canonical direct package paths and internally consistent totals. CI publishes
-exactly the wheel, sdist, and `SHA256SUMS`; checksum rows are deterministic and
-ordered wheel first, sdist second.
+The sdist also includes the coverage checker, release-provenance builders and
+verifiers, and both hash-locked CI requirement files. This permits an unpacked
+sdist to reproduce the Coverage.py JSON format-3 policy and inspect the release
+toolchain contract.
+
+The v0.3.0a5 development pipeline publishes exactly five files: wheel, sdist,
+full Git source ZIP, `release-provenance.json`, and `SHA256SUMS`. Checksum rows
+are deterministic and ordered wheel, sdist, source ZIP, provenance. The full
+source ZIP is Git-tree-exact and includes repository tests and workflows; the
+sdist remains deliberately package-oriented and excludes them.

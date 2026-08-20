@@ -4,6 +4,17 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added
+
+- CI-generated full repository source archives bound to the exact commit and Git tree by a machine-readable release provenance manifest.
+- Dedicated Audit Material v2 rejection-path tests and per-module coverage gates for the security-critical canonicalization and attestation code.
+- Hash-locked CI build and test dependency sets plus a deterministic release-toolchain report.
+
+### Changed
+
+- Release checksums now cover the wheel, PyPA source distribution, full Git source archive, and release provenance manifest in a fixed order.
+- The development package version is `0.3.0a5`; the SQLite schema, formal v0.3 JSON contracts, Impact outcomes, CLI exit codes, and frozen v0.1 baseline remain unchanged.
+
 ## [0.3.0a4] - 2026-08-21
 
 ### Added

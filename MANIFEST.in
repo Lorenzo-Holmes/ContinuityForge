@@ -8,6 +8,11 @@ recursive-include LICENSES *.md
 recursive-include docs *.md
 recursive-include schemas *.schema.json
 include scripts/check_coverage.py
+include scripts/build_source_archive.py
+include scripts/verify_release_environment.py
+include scripts/verify_release_provenance.py
+include requirements/ci-build.txt
+include requirements/ci-test.txt
 recursive-include examples/north_pier *.json *.md *.py *.txt
 prune .github
 prune .mypy_cache

@@ -19,6 +19,15 @@ python -m pytest
 
 Python 3.10 or newer is required. ContinuityForge has no third-party runtime dependencies.
 
+The editable `.[dev]` setup is the convenient contributor workflow. Release
+CI instead installs `requirements/ci-build.txt` and
+`requirements/ci-test.txt` with pip's `--require-hashes` mode, builds with
+`--no-isolation`, and verifies the resulting environment record. When a CI
+tool changes, update the exact pin, every official PyPI SHA-256 required by the
+supported platform matrix, the release-environment tests, and the changelog in
+the same review. Never hand-edit a digest without verifying the corresponding
+distribution file.
+
 Run a focused test while iterating, then the complete suite before opening a pull request:
 
 ```bash
