@@ -13,6 +13,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 ### Changed
 
 - Release checksums now cover the wheel, PyPA source distribution, full Git source archive, and release provenance manifest in a fixed order.
+- CI artifact upload uses the verified `upload-artifact` v7.0.1 commit and its Node.js 24 runtime instead of the deprecated Node.js 20 action runtime.
 - The development package version is `0.3.0a5`; the SQLite schema, formal v0.3 JSON contracts, Impact outcomes, CLI exit codes, and frozen v0.1 baseline remain unchanged.
 
 ## [0.3.0a4] - 2026-08-21
