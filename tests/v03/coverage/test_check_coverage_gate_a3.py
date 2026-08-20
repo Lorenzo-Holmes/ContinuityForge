@@ -25,6 +25,18 @@ def _file(
 ) -> dict[str, object]:
     covered_lines, statements = lines
     covered_branches, missing_branches = branches
+    executed_branch_details = list(executed or [])
+    missing_branch_details = list(missing or [])
+    assert len(executed_branch_details) <= covered_branches
+    assert len(missing_branch_details) <= missing_branches
+    executed_branch_details.extend(
+        [[10_000 + index, 20_000 + index]
+         for index in range(len(executed_branch_details), covered_branches)]
+    )
+    missing_branch_details.extend(
+        [[30_000 + index, 40_000 + index]
+         for index in range(len(missing_branch_details), missing_branches)]
+    )
     return {
         "summary": {
             "covered_lines": covered_lines,
@@ -32,8 +44,10 @@ def _file(
             "covered_branches": covered_branches,
             "missing_branches": missing_branches,
         },
-        "executed_branches": executed or [],
-        "missing_branches": missing or [],
+        "executed_lines": list(range(1, covered_lines + 1)),
+        "missing_lines": list(range(covered_lines + 1, statements + 1)),
+        "executed_branches": executed_branch_details,
+        "missing_branches": missing_branch_details,
     }
 
 
@@ -122,6 +136,63 @@ def test_unknown_critical_branch_is_a_configuration_error() -> None:
         coverage_gate.evaluate_coverage(
             payload, critical_branches=["src/continuityforge/storage.py:42:99"]
         )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            _payload({"src/continuityforge/storage.py": _file(lines=(0, 0), branches=(0, 0))}),
+            "denominator must be positive",
+        ),
+        (
+            _payload({"src/continuityforge/storage.py": _file(lines=(1, 1), branches=(0, 0))}),
+            "denominator must be positive",
+        ),
+        (
+            _payload(
+                {
+                    "src/continuityforge/storage.py": _file(lines=(1, 1), branches=(0, 0)),
+                    "src/continuityforge/other.py": _file(lines=(1, 1), branches=(1, 0)),
+                }
+            ),
+            "denominator must be positive",
+        ),
+    ],
+)
+def test_empty_release_gate_denominators_fail_closed(
+    payload: dict[str, object], expected: str
+) -> None:
+    with pytest.raises(coverage_gate.CoverageInputError, match=expected):
+        coverage_gate.evaluate_coverage(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("covered_lines", 79, "covered-lines summary disagrees"),
+        ("covered_branches", 79, "covered-branches summary disagrees"),
+        ("missing_branches", 19, "missing-branches summary disagrees"),
+    ],
+)
+def test_summary_counters_must_match_coverage_details(
+    field: str, value: int, expected: str
+) -> None:
+    entry = _file()
+    entry["summary"][field] = value  # type: ignore[index]
+    payload = _payload({"src/continuityforge/storage.py": entry})
+
+    with pytest.raises(coverage_gate.CoverageInputError, match=expected):
+        coverage_gate.evaluate_coverage(payload)
+
+
+def test_executed_and_missing_branch_details_must_be_disjoint() -> None:
+    entry = _file(branches=(1, 1), executed=[[42, 43]], missing=[[42, 44]])
+    entry["missing_branches"] = [[42, 43]]
+    payload = _payload({"src/continuityforge/storage.py": entry})
+
+    with pytest.raises(coverage_gate.CoverageInputError, match="overlapping.*branches"):
+        coverage_gate.evaluate_coverage(payload)
 
 
 def test_main_returns_input_error_for_invalid_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -91,8 +91,9 @@ def _summary_counts(summary: Mapping[str, Any], field: str) -> int:
 
 
 def _percentage(numerator: int, denominator: int) -> float:
-    # A file with no branch opportunities is not a meaningful branch target.
-    return 100.0 if denominator == 0 else 100.0 * numerator / denominator
+    if denominator <= 0:
+        raise CoverageInputError("coverage gate denominator must be positive")
+    return 100.0 * numerator / denominator
 
 
 def _gate(name: str, numerator: int, denominator: int, minimum: float) -> GateResult:
@@ -114,6 +115,36 @@ def _files_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Mapping[str,
         # Validate all counters used by every gate before calculating anything.
         for field in ("covered_lines", "num_statements", "covered_branches", "missing_branches"):
             _summary_counts(summary, field)
+
+        executed_lines = _line_numbers(entry, "executed_lines")
+        missing_lines = _line_numbers(entry, "missing_lines")
+        if executed_lines & missing_lines:
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} contains overlapping executed and missing lines"
+            )
+        if _summary_counts(summary, "covered_lines") != len(executed_lines):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} covered-lines summary disagrees with details"
+            )
+        if _summary_counts(summary, "num_statements") != len(executed_lines | missing_lines):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} statement summary disagrees with details"
+            )
+
+        executed_branches = _branch_pairs(entry, "executed_branches")
+        missing_branches = _branch_pairs(entry, "missing_branches")
+        if executed_branches & missing_branches:
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} contains overlapping executed and missing branches"
+            )
+        if _summary_counts(summary, "covered_branches") != len(executed_branches):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} covered-branches summary disagrees with details"
+            )
+        if _summary_counts(summary, "missing_branches") != len(missing_branches):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} missing-branches summary disagrees with details"
+            )
         result[_normalise_path(raw_path)] = entry
     return result
 
@@ -142,8 +173,22 @@ def _parse_critical_branch(specification: str) -> tuple[str, tuple[int, int]]:
     return _normalise_path(raw_path), (source, destination)
 
 
+def _line_numbers(entry: Mapping[str, Any], field: str) -> set[int]:
+    raw_lines = entry.get(field)
+    if not isinstance(raw_lines, list):
+        raise CoverageInputError(f"coverage line field {field!r} must be a list")
+    lines: set[int] = set()
+    for value in raw_lines:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise CoverageInputError(f"coverage line field {field!r} contains an invalid line")
+        if value in lines:
+            raise CoverageInputError(f"coverage line field {field!r} contains a duplicate line")
+        lines.add(value)
+    return lines
+
+
 def _branch_pairs(entry: Mapping[str, Any], field: str) -> set[tuple[int, int]]:
-    raw_pairs = entry.get(field, [])
+    raw_pairs = entry.get(field)
     if not isinstance(raw_pairs, list):
         raise CoverageInputError(f"coverage branch field {field!r} must be a list")
     pairs: set[tuple[int, int]] = set()
@@ -154,7 +199,10 @@ def _branch_pairs(entry: Mapping[str, Any], field: str) -> set[tuple[int, int]]:
             or not all(isinstance(value, int) and not isinstance(value, bool) for value in pair)
         ):
             raise CoverageInputError(f"coverage branch field {field!r} contains an invalid branch")
-        pairs.add((pair[0], pair[1]))
+        branch = (pair[0], pair[1])
+        if branch in pairs:
+            raise CoverageInputError(f"coverage branch field {field!r} contains a duplicate branch")
+        pairs.add(branch)
     return pairs
 
 
