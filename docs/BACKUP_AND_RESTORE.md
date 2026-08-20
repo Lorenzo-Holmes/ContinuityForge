@@ -2,7 +2,7 @@
 
 ## Status
 
-The unreleased v0.3.0a2 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
+The unreleased v0.3.0a3 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
 
 ```bash
 continuityforge --db project.db migration-check --mode strict
@@ -28,7 +28,7 @@ A migration-grade backup must:
 9. be published without replacing any existing path or following a symbolic-link target;
 10. remain available until migration and restoration verification complete.
 
-The v0.3.0a2 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
+The v0.3.0a3 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
 
 ## Migration backup metadata
 
@@ -130,6 +130,6 @@ Treat the artifact as unusable. Create a new consistent backup from a verified s
 
 ## Operational ownership
 
-The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a2 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
+The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a3 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
 
 See [Migration v3](MIGRATION_V3.md) and [Threat Model](THREAT_MODEL.md).

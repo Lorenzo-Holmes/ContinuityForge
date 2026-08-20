@@ -128,3 +128,8 @@ JSON files, and the distribution test must inspect the built sdist and assert
 the exact three paths are present. Schema validation tests require
 `jsonschema>=4,<5` in the development/test dependency set. Release automation
 must not publish an sdist that fails either assertion.
+
+The sdist also includes `scripts/check_coverage.py`, allowing the release
+coverage policy to be reproduced from a Coverage.py JSON report. CI publishes
+exactly the wheel, sdist, and `SHA256SUMS`; checksum rows are deterministic and
+ordered wheel first, sdist second.

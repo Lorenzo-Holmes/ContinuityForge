@@ -3,9 +3,9 @@
 ## Status vocabulary
 
 - **Released:** available in v0.2.0.
-- **Implemented, unreleased:** present in the v0.3.0a2 development code and tests.
+- **Implemented, unreleased:** present in the v0.3.0a3 development code and tests.
 - **Accepted contract:** approved in [V0_3_DECISIONS.md](V0_3_DECISIONS.md); integration may still be in progress.
-- **Deferred:** intentionally outside v0.3.0a2.
+- **Deferred:** intentionally outside v0.3.0a3.
 
 ## System context
 

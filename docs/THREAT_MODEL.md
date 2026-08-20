@@ -124,15 +124,16 @@ The implementation writes to an unpredictable same-directory temporary regular f
 
 Every read-only SQLite entry point inspects both `-wal` and `-shm` names with
 `lstat` before opening the database. Symbolic links, broken links, directories,
-and other non-regular sidecars fail closed; a WAL without an existing SHM also
+other non-regular sidecars, sidecars with a link count other than one, and
+reused non-zero file identities fail closed; a WAL without an existing SHM also
 fails closed so SQLite cannot create the missing file. This is a preflight, not
 an operating-system lock: the `lstat`-to-open interval remains inside the
 trusted local owner/directory boundary. SQLite may update coordination bytes in
-an already-existing regular SHM while leaving the main database, WAL, schema,
-and domain state unchanged. Inspect a private consistent copy when byte-for-byte
-filesystem immutability is required.
+an already-existing single-link regular SHM while leaving the main database,
+WAL, schema, and domain state unchanged. Inspect a private consistent copy when
+byte-for-byte filesystem immutability is required.
 
-In v0.3.0a2, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
+In v0.3.0a3, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
 
 ## Disclosure boundaries
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import email
+import hashlib
 import os
 import tarfile
 import zipfile
@@ -12,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 
-EXPECTED_VERSION = "0.3.0a2"
+EXPECTED_VERSION = "0.3.0a3"
 FORBIDDEN_SUFFIXES = {
     ".bak",
     ".backup",
@@ -165,6 +166,7 @@ def test_source_archive_is_clean_and_versioned() -> None:
         root + "schemas/error-v0.3.schema.json",
         root + "schemas/migration-report-v0.3.schema.json",
         root + "schemas/source-impact-v0.3.schema.json",
+        root + "scripts/check_coverage.py",
         root + "examples/north_pier/README.md",
         root + "examples/north_pier/impact-cases.json",
         root + "examples/north_pier/north_pier_v1.txt",
@@ -172,3 +174,34 @@ def test_source_archive_is_clean_and_versioned() -> None:
         root + "examples/north_pier/run_demo.py",
     }
     assert required <= set(members)
+    schema_members = sorted(
+        member for member in members if member.startswith(root + "schemas/")
+    )
+    assert schema_members == sorted(
+        [
+            root + "schemas/error-v0.3.schema.json",
+            root + "schemas/migration-report-v0.3.schema.json",
+            root + "schemas/source-impact-v0.3.schema.json",
+        ]
+    )
+
+
+def test_sha256sums_is_complete_ordered_and_correct() -> None:
+    dist = _dist_dir()
+    checksum_path = dist / "SHA256SUMS"
+    expected_names = [
+        f"continuityforge-{EXPECTED_VERSION}-py3-none-any.whl",
+        f"continuityforge-{EXPECTED_VERSION}.tar.gz",
+    ]
+    lines = checksum_path.read_text(encoding="ascii").splitlines()
+    assert len(lines) == len(expected_names)
+
+    actual_names: list[str] = []
+    for line, expected_name in zip(lines, expected_names):
+        digest, filename = line.split(maxsplit=1)
+        actual_names.append(filename)
+        artifact = dist / filename
+        assert artifact.is_file()
+        assert digest == hashlib.sha256(artifact.read_bytes()).hexdigest()
+        assert filename == expected_name
+    assert actual_names == expected_names

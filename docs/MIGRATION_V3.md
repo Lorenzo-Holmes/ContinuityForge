@@ -122,7 +122,7 @@ Stopping is preferable to guessing.
 
 ## Explicit quarantine mode
 
-Quarantine is optional and must be explicitly selected. v0.3.0a2 applies functional quarantine only while migrating v0.1: each malformed row remains in its renamed legacy table and `legacy_records`, and no active domain row is created for it. Dependent v0.1 rows are quarantined with their invalid snapshot when required.
+Quarantine is optional and must be explicitly selected. v0.3.0a3 applies functional quarantine only while migrating v0.1: each malformed row remains in its renamed legacy table and `legacy_records`, and no active domain row is created for it. Dependent v0.1 rows are quarantined with their invalid snapshot when required.
 
 Malformed v0.2 data remains a blocking error even in quarantine mode. The alpha does not reinterpret or partially map malformed v0.2 provenance.
 

@@ -10,9 +10,11 @@ ContinuityForge is a local, dependency-light compiler above RAG and memory store
 
 - **v0.1:** frozen observable compatibility baseline.
 - **v0.2.0:** current released CLI, SQLite, governance, ledger, and Memory Pack workflow.
-- **v0.3.0a2:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
+- **v0.3.0a3:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
 
-The v0.1 and v0.2 contracts remain intact while v0.3 is developed. Alpha commands are executable in the development tree but are not a stable release contract yet.
+The v0.1 and v0.2 contracts remain intact while v0.3 is developed. The alpha
+feature set remains unreleased, while the documented v0.3 command, stream,
+exit-code, and machine-report contracts are frozen and tested.
 
 ## What ContinuityForge guarantees
 
@@ -30,7 +32,7 @@ Released v0.2 behavior provides:
 - JSON Memory Packs retaining claim and evidence provenance;
 - zero third-party runtime dependencies.
 
-Implemented, unreleased v0.3.0a2 work strengthens those guarantees with:
+Implemented, unreleased v0.3.0a3 work strengthens those guarantees with:
 
 - strict built-in-integer evidence coordinates;
 - bounded, control-aware source ingestion;
@@ -75,7 +77,7 @@ Snapshot impact is **report-only**. A new source version can produce an impact r
 
 ### Source-body disclosure
 
-v0.3.0a2 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
+v0.3.0a3 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
 
 ## Architecture at a glance
 
@@ -173,7 +175,7 @@ continuityforge --db forge.db compile \
 
 Use `continuityforge COMMAND --help` for released options.
 
-## v0.3.0a2 database lifecycle
+## v0.3.0a3 database lifecycle
 
 Every command now declares how it may interact with the database path:
 
@@ -186,7 +188,7 @@ Every command now declares how it may interact with the database path:
 
 A missing existing-database target fails with `DATABASE_NOT_FOUND` and no filesystem side effects. An ordinary command aimed at a recognized legacy database fails closed instead of constructing writable `Storage`; run `migration-check`, then `migrate` explicitly.
 
-## v0.3.0a2 preview CLI—implemented, unreleased
+## v0.3.0a3 preview CLI—implemented, unreleased
 
 These commands are executable in the development tree. Their flags, streams,
 exit codes, and JSON report shapes are tested against the formal
@@ -213,13 +215,13 @@ continuityforge --db project.db migration-check --mode strict
 continuityforge --db project.db migrate --mode strict
 ```
 
-`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a2; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
+`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a3; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
 
 Affected event evidence is admitted to an impact report only after the complete bounded event batch is replayed against its creation ledger material inside the same pinned read transaction. A mismatch fails closed with `EVENT_AUDIT_INVALID`; inspection does not downgrade the event to an unaudited anchor.
 
 ## Deterministic Impact API
 
-The v0.3.0a2 pure-domain Impact engine is available to library callers in the development tree:
+The v0.3.0a3 pure-domain Impact engine is available to library callers in the development tree:
 
 ```python
 from continuityforge.impact import analyze_evidence_impact
@@ -252,7 +254,7 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
   --continuity alpha --source-key north-pier-field-log
 ```
 
-The v0.3.0a2 development tree can inspect the imported revisions with the
+The v0.3.0a3 development tree can inspect the imported revisions with the
 `source-impact` syntax above. The report is metadata-only and follows the
 formal `continuityforge.source-impact/v0.3` schema. Demo data licensing is
 documented in [Demo Licenses](docs/DEMO_LICENSES.md).

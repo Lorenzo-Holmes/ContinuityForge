@@ -6,7 +6,7 @@
 - v0.2 introduces logical sources, immutable versions, proposal governance, narrative events, and EventLedger.
 - v0.3 adds stricter authority/migration invariants and read-only impact/inspection reports without changing snapshot history automatically.
 
-Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a2 development tree. Report values are transient and need not be persisted.
+Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a3 development tree. Report values are transient and need not be persisted.
 
 ## Entity overview
 
@@ -196,7 +196,7 @@ A frozen, non-persisted-by-default exact-match result:
 
 It excludes the quote and complete source body by default and has no authority to mutate claim status.
 
-## Inspection and migration reports (v0.3.0a2)
+## Inspection and migration reports (v0.3.0a3)
 
 `SourceImpactReport` aggregates:
 

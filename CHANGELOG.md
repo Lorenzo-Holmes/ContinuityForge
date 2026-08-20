@@ -20,7 +20,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Bounded endpoint-only impact inspection with snapshot hash/line-count verification, global ledger, affected-claim authority, and affected-event creation-audit replay, batched exact matching, and metadata injection controls.
 - Unreleased `source-impact`, `migration-check`, and `migrate` CLI commands with metadata-first JSON reports and formal v0.3 machine contracts.
 - Explicit create-capable, write-existing, read-existing, and explicit-migrate CLI lifecycles, with stable missing-database and migration-required errors.
-- Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10–3.14 coverage, wheel/sdist inspection, clean-wheel installation, and an unpacked-sdist North Pier smoke test.
+- Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10-3.14 coverage, wheel/sdist inspection, clean-wheel installation, an unpacked-sdist North Pier smoke test, and a deterministic `SHA256SUMS` release manifest.
 - v0.3 architecture, threat-model, migration, backup/restore, data-model, security-testing, and demo-license documentation.
 - Original North Pier v1/v2 revision-impact fixtures.
 
@@ -28,7 +28,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 
 - Ordinary read, validation, compile, list, ledger, governance, and event commands no longer initialize or migrate a database as a side effect; legacy upgrades require the explicit `migrate` path.
 - `NO_EXACT_MATCH` documentation now states only that the old continuous exact quote is absent. It does not label the cause as editing, deletion, truncation, or line restructuring.
-- Source distributions now include the core documentation set, license notices, and executable North Pier fixtures while excluding tests and database/credential-like artifacts.
+- Source distributions now include the core documentation set, license notices, formal schemas, the release coverage checker, and executable North Pier fixtures while excluding tests and database/credential-like artifacts.
 
 ### Fixed
 
@@ -39,7 +39,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 
 ### Pre-release limitations
 
-- v0.3.0a2 has not been released; its formal v0.3 command/report schemas are
+- v0.3.0a3 has not been released; its formal v0.3 command/report schemas are
   frozen and distributed with the source archive.
 - Restore and deployment activation remain operator workflows; there is no restore CLI.
 - HTTP, MCP, provider adapters, semantic impact, and automatic governance changes remain deferred.
@@ -50,7 +50,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Defined metadata-first administrative reports that omit complete source bodies by default.
 - Preserved the operator-only `NarrativeEvent` boundary and report-only impact behavior.
 - Hardened migration backups with unpredictable same-directory temporary files, identity/type verification, POSIX `0600`, collision-safe no-replace publication, and symbolic-link rejection.
-- Raised the cross-platform branch-coverage gate from 70% to 75% and added trusted-read-surface parity contracts.
+- Enforced 80% combined coverage, 75% global branch coverage, 80% trusted-module branch coverage, explicit critical-branch/file gates, and both direct `ResourceWarning` and pytest unraisable-warning failures across the CI matrix.
 
 ## [0.2.0] - 2026-08-19
 

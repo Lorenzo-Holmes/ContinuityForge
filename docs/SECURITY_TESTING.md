@@ -1,6 +1,6 @@
 # Security Testing
 
-This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a2 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
+This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a3 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
 
 ## Test layers
 
@@ -23,10 +23,21 @@ Run all available tests from the repository root:
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest
-python -m compileall -q src tests
+python -m compileall -q src tests scripts
 ```
 
-CI runs the coverage-gated suite on Linux with Python 3.10–3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. A separate job builds both distributions, inspects their contents/metadata, installs the wheel in a clean environment, exercises the alpha CLI, and runs North Pier from the unpacked sdist rather than the checkout.
+CI runs the coverage-gated suite on Linux with Python 3.10-3.14 and on Windows/macOS at the 3.10 and 3.14 endpoints. A separate job builds both distributions, inspects their contents/metadata, installs the wheel in a clean environment, exercises the alpha CLI, runs North Pier from the unpacked sdist rather than the checkout, and publishes a wheel-first/sdist-second `SHA256SUMS` manifest.
+
+### Coverage and resource-warning gates
+
+Release CI treats both direct `ResourceWarning` and pytest's `PytestUnraisableExceptionWarning` wrapper as errors, so a destructor-time leak cannot pass with exit code zero. CI also writes Coverage.py JSON for a second deterministic gate. The required thresholds are:
+
+- at least 80% combined statement-and-branch coverage;
+- at least 75% global branch coverage;
+- at least 80% branch coverage across trusted modules;
+- 100% for each configured critical branch and critical file.
+
+`scripts/check_coverage.py` enforces the latter three policies from `coverage.json`; CI also asks pytest-cov to fail below the 80% combined threshold. The checker is included in the source distribution so an unpacked release can reproduce the policy.
 
 ## Threat-to-test matrix
 
@@ -82,7 +93,7 @@ Every supported starting schema needs at least these cases:
 6. a restored v0.1/v0.2 fixture still passes its observable compatibility suite;
 7. preflight and inspection leave the main database, WAL, schema, and logical row counts unchanged; SQLite may update coordination bytes in an already-existing `-shm` file.
 8. backup publication preserves existing regular artifacts, rejects symbolic-link targets, verifies file identity/type, and retains POSIX mode `0600`.
-9. every read-only entry point rejects symbolic links, broken links, directories, and other non-regular WAL/SHM sidecars before SQLite opens the database; a WAL without SHM is rejected without creating SHM.
+9. every read-only entry point rejects symbolic links, broken links, directories, non-regular WAL/SHM sidecars, sidecar link counts other than one, and reused non-zero database/sidecar file identities before SQLite opens the database; a WAL without SHM is rejected without creating SHM.
 
 `migration-check` is implemented but unreleased. Its CLI path sets
 `create_backup=False`; tests must assert no database, missing sidecar, backup,
@@ -121,4 +132,5 @@ A v0.3 release candidate is blocked until:
 - default administrative-report redaction tests pass;
 - all v0.3 alpha CLI behavior is implemented, tested, documented, and clearly marked unreleased;
 - wheel and sdist inspection passes, and North Pier runs from an unpacked sdist against the clean-installed wheel;
+- `SHA256SUMS` contains exactly the wheel and sdist in stable order and both hashes verify;
 - security-relevant changes receive review against [Threat Model](THREAT_MODEL.md).

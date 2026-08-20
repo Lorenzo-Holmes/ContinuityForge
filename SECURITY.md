@@ -4,7 +4,7 @@
 
 | Version | Security status |
 |---|---|
-| `main` / unreleased v0.3.0a2 | Actively developed and tested |
+| `main` / unreleased v0.3.0a3 | Actively developed and tested |
 | `0.2.x` | Current supported release line |
 | `0.1.x` | Frozen compatibility reference; upgrade recommended |
 
