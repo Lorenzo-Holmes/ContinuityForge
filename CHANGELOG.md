@@ -16,9 +16,9 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Strict schema fingerprinting and a write-free `migration-check` preflight for existing databases.
 - Backup-gated, transactional v0.1/v0.2 to v0.3 migration through the unreleased `migrate` command.
 - Explicit v0.1 quarantine mode that preserves each malformed row in legacy storage without creating an active domain row; malformed v0.2 data still blocks migration.
-- A URI/read-barrier-based `ReadOnlyProject` and storage-aware `InspectionService` for source/continuity-safe claim and event impact reports, versioned as `continuityforge.source-impact/v0.3-alpha` with both snapshot hashes and no source body/quote fields.
+- A URI/read-barrier-based `ReadOnlyProject` and storage-aware `InspectionService` for source/continuity-safe claim and event impact reports, versioned as `continuityforge.source-impact/v0.3` with both snapshot hashes and no source body/quote fields.
 - Bounded endpoint-only impact inspection with snapshot hash/line-count verification, global ledger, affected-claim authority, and affected-event creation-audit replay, batched exact matching, and metadata injection controls.
-- Unreleased `source-impact`, `migration-check`, and `migrate` alpha CLI commands with metadata-first JSON reports.
+- Unreleased `source-impact`, `migration-check`, and `migrate` CLI commands with metadata-first JSON reports and formal v0.3 machine contracts.
 - Explicit create-capable, write-existing, read-existing, and explicit-migrate CLI lifecycles, with stable missing-database and migration-required errors.
 - Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10–3.14 coverage, wheel/sdist inspection, clean-wheel installation, and an unpacked-sdist North Pier smoke test.
 - v0.3 architecture, threat-model, migration, backup/restore, data-model, security-testing, and demo-license documentation.
@@ -39,7 +39,8 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 
 ### Pre-release limitations
 
-- v0.3.0a2 has not been released and new command/report schemas may change.
+- v0.3.0a2 has not been released; its formal v0.3 command/report schemas are
+  frozen and distributed with the source archive.
 - Restore and deployment activation remain operator workflows; there is no restore CLI.
 - HTTP, MCP, provider adapters, semantic impact, and automatic governance changes remain deferred.
 

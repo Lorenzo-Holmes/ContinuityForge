@@ -17,6 +17,8 @@ EXIT_SCHEMA_FAILED = 6
 # outside these sets must opt in explicitly rather than inheriting a writable
 # ``Storage`` constructor by accident.
 CLI_ERROR_SCHEMA = "continuityforge.error/v0.3"
+SOURCE_IMPACT_SCHEMA = "continuityforge.source-impact/v0.3"
+MIGRATION_REPORT_SCHEMA = "continuityforge.migration-report/v0.3"
 CLI_LIFECYCLE_CREATE_CAPABLE = "create-capable"
 CLI_LIFECYCLE_WRITE_EXISTING = "write-existing"
 CLI_LIFECYCLE_READ_EXISTING = "read-existing"

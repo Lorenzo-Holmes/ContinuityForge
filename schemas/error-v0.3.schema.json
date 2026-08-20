@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Lorenzo-Holmes/ContinuityForge/main/schemas/error-v0.3.schema.json",
+  "title": "ContinuityForge CLI Error Envelope v0.3",
+  "description": "Stable runtime-error envelope written to stderr after command-line parsing succeeds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "code",
+    "error",
+    "message"
+  ],
+  "properties": {
+    "schema": {
+      "const": "continuityforge.error/v0.3"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "report": {
+      "type": "object"
+    },
+    "conflicting_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

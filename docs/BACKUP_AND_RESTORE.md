@@ -30,12 +30,15 @@ A migration-grade backup must:
 
 The v0.3.0a2 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
 
-## Alpha backup metadata
+## Migration backup metadata
 
-`MigrationReport` binds the backup path and SHA-256 to the source structural fingerprint and migration checks. Current alpha output contains metadata similar to:
+`MigrationReport` binds the backup path and SHA-256 to the source structural
+fingerprint and migration checks. Formal v0.3 output contains metadata similar
+to:
 
 ```json
 {
+  "schema": "continuityforge.migration-report/v0.3",
   "source": {
     "kind": "v0.2",
     "digest": "STRUCTURAL_SCHEMA_SHA256",
@@ -53,7 +56,12 @@ The v0.3.0a2 implementation builds the SQLite backup in an unpredictable same-di
 }
 ```
 
-The full JSON also contains schema object lists, capacity checks, target fingerprint, timestamps, migrated counts, issues, and quarantine records. The report schema is not frozen until v0.3 release. The backup filename is collision-safe: later runs use `.pre-v3.2.bak`, `.pre-v3.3.bak`, and so on rather than overwriting an existing artifact. Backup creation and verification complete before the migration transaction begins.
+The full JSON also contains schema object lists, capacity checks, target
+fingerprint, timestamps, migrated counts, issues, and quarantine records. Its
+exact shape is frozen by the [v0.3 CLI contract](CLI_CONTRACT.md). The backup
+filename is collision-safe: later runs use `.pre-v3.2.bak`, `.pre-v3.3.bak`,
+and so on rather than overwriting an existing artifact. Backup creation and
+verification complete before the migration transaction begins.
 
 ## Confidentiality
 

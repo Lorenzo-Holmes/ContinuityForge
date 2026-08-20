@@ -183,11 +183,12 @@ The alpha fails closed instead of truncating a report. Defaults are:
 
 The pure single-anchor engine separately caps exact candidates at 10,000. The batch matcher caps total pattern lines at 1,000,000. Metadata containing C0/C1, ANSI, bidirectional controls, or unpaired surrogates is rejected before it reaches success JSON.
 
-Current alpha output is explicitly versioned and binds both revisions by complete-content SHA-256 without returning either body:
+The formal v0.3 output binds both revisions by complete-content SHA-256 without
+returning either body:
 
 ```json
 {
-  "schema": "continuityforge.source-impact/v0.3-alpha",
+  "schema": "continuityforge.source-impact/v0.3",
   "report_only": true,
   "source": {
     "source_id": "SOURCE_ID",

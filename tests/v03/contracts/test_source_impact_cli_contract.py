@@ -130,7 +130,7 @@ def _affected(
 
 def _golden_report() -> dict[str, object]:
     return {
-        "schema": "continuityforge.source-impact/v0.3-alpha",
+        "schema": "continuityforge.source-impact/v0.3",
         "report_only": True,
         "source": {
             "source_id": "src_0001",

@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 from typing import Any
 
+from .constants import SOURCE_IMPACT_SCHEMA
 from .evidence import quote_sha256
 from .exceptions import (
     ContinuityViolation,
@@ -248,7 +249,7 @@ class SourceImpactReport:
         """Return deterministic JSON data without source text or evidence quotes."""
 
         return {
-            "schema": "continuityforge.source-impact/v0.3-alpha",
+            "schema": SOURCE_IMPACT_SCHEMA,
             "report_only": True,
             "source": {
                 "source_id": self.source_id,

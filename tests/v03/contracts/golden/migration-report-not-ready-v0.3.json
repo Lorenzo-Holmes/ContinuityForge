@@ -1,0 +1,48 @@
+{
+  "changed": false,
+  "checks": {
+    "available_free_bytes": 999999999,
+    "backup_path": null,
+    "backup_sha256": null,
+    "database_bytes": 4096,
+    "foreign_key_violations": 0,
+    "quick_check": "ok",
+    "required_free_bytes": 1048576
+  },
+  "finished_at": "2026-08-20T00:00:01Z",
+  "is_ready": false,
+  "issues": [
+    {
+      "actual": "unknown",
+      "code": "MIGRATION_SCHEMA_UNRECOGNIZED",
+      "field": null,
+      "message": "database is unknown or only partially matches a known schema",
+      "record_id": null,
+      "severity": "error",
+      "table": null
+    }
+  ],
+  "migrated_counts": {},
+  "mode": "strict",
+  "quarantine": {
+    "count": 0,
+    "records": []
+  },
+  "schema": "continuityforge.migration-report/v0.3",
+  "source": {
+    "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "indexes": [],
+    "kind": "unknown",
+    "metadata_version": null,
+    "tables": [
+      "unrelated"
+    ],
+    "triggers": [],
+    "user_version": 0
+  },
+  "started_at": "2026-08-20T00:00:00Z",
+  "status": "preflight",
+  "succeeded": false,
+  "target": null,
+  "target_version": 3
+}

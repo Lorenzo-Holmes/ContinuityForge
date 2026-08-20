@@ -23,7 +23,7 @@ import tempfile
 import unicodedata
 from typing import Any, Iterable, Mapping
 
-from .constants import SCHEMA_VERSION
+from .constants import MIGRATION_REPORT_SCHEMA, SCHEMA_VERSION
 from .evidence import quote_sha256
 from .exceptions import MigrationError
 from .ingest import SourceInputError, extract_line_quote, parse_json_content, source_lines
@@ -140,6 +140,7 @@ class MigrationReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": MIGRATION_REPORT_SCHEMA,
             "mode": self.mode.value,
             "source": self.source.to_dict(),
             "target_version": self.target_version,

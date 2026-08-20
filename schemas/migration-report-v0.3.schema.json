@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Lorenzo-Holmes/ContinuityForge/main/schemas/migration-report-v0.3.schema.json",
+  "title": "ContinuityForge Migration Report v0.3",
+  "description": "Metadata-first report emitted by migration-check and successful explicit migrations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "mode",
+    "source",
+    "target_version",
+    "status",
+    "is_ready",
+    "succeeded",
+    "changed",
+    "issues",
+    "checks",
+    "target",
+    "started_at",
+    "finished_at",
+    "migrated_counts",
+    "quarantine"
+  ],
+  "properties": {
+    "schema": {
+      "const": "continuityforge.migration-report/v0.3"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "strict",
+        "quarantine"
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/schemaFingerprint"
+    },
+    "target_version": {
+      "const": 3
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "preflight",
+        "initialized",
+        "migrated",
+        "already-current",
+        "failed"
+      ]
+    },
+    "is_ready": {
+      "type": "boolean"
+    },
+    "succeeded": {
+      "type": "boolean"
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/migrationIssue"
+      }
+    },
+    "checks": {
+      "$ref": "#/$defs/checks"
+    },
+    "target": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/schemaFingerprint"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "$ref": "#/$defs/nullableTimestamp"
+    },
+    "finished_at": {
+      "$ref": "#/$defs/nullableTimestamp"
+    },
+    "migrated_counts": {
+      "$ref": "#/$defs/migratedCounts"
+    },
+    "quarantine": {
+      "$ref": "#/$defs/quarantine"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nullableNonNegativeInteger": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "redactedDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "redacted",
+        "type"
+      ],
+      "properties": {
+        "redacted": {
+          "const": true
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "length": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "safeIdentifier": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/$defs/redactedDescriptor"
+        }
+      ]
+    },
+    "nullableSafeIdentifier": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safeIdentifier"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schemaFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "digest",
+        "user_version",
+        "metadata_version",
+        "tables",
+        "indexes",
+        "triggers"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "empty",
+            "v0.1",
+            "v0.2",
+            "v0.3-alpha2",
+            "v0.3",
+            "unknown",
+            "partial"
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "user_version": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "metadata_version": {
+          "$ref": "#/$defs/nullableNonNegativeInteger"
+        },
+        "tables": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeIdentifier"
+          }
+        },
+        "indexes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeIdentifier"
+          }
+        },
+        "triggers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safeIdentifier"
+          }
+        }
+      }
+    },
+    "migrationIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "table",
+        "record_id",
+        "field",
+        "actual",
+        "severity"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "table": {
+          "$ref": "#/$defs/nullableSafeIdentifier"
+        },
+        "record_id": {
+          "$ref": "#/$defs/nullableSafeIdentifier"
+        },
+        "field": {
+          "$ref": "#/$defs/nullableSafeIdentifier"
+        },
+        "actual": true,
+        "severity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quick_check",
+        "foreign_key_violations",
+        "database_bytes",
+        "required_free_bytes",
+        "available_free_bytes",
+        "backup_path",
+        "backup_sha256"
+      ],
+      "properties": {
+        "quick_check": {
+          "type": "string",
+          "minLength": 1
+        },
+        "foreign_key_violations": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "database_bytes": {
+          "$ref": "#/$defs/nullableNonNegativeInteger"
+        },
+        "required_free_bytes": {
+          "$ref": "#/$defs/nullableNonNegativeInteger"
+        },
+        "available_free_bytes": {
+          "$ref": "#/$defs/nullableNonNegativeInteger"
+        },
+        "backup_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backup_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "migratedCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "snapshots": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "claims": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "events": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "event_evidence": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "decisions": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "ledger": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "legacy_records": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        }
+      }
+    },
+    "quarantineRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "table",
+        "record_id"
+      ],
+      "properties": {
+        "table": {
+          "$ref": "#/$defs/safeIdentifier"
+        },
+        "record_id": {
+          "$ref": "#/$defs/safeIdentifier"
+        }
+      }
+    },
+    "quarantine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "records"
+      ],
+      "properties": {
+        "count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "records": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/quarantineRecord"
+          }
+        }
+      }
+    }
+  }
+}

@@ -204,7 +204,7 @@ It excludes the quote and complete source body by default and has no authority t
 - from/to snapshot IDs, versions, and complete-content SHA-256 values;
 - sorted claim/event-owned evidence impacts;
 - claim governance status and per-outcome counts;
-- schema marker `continuityforge.source-impact/v0.3-alpha` and an always-true `report_only` marker.
+- schema marker `continuityforge.source-impact/v0.3` and an always-true `report_only` marker.
 
 `ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the global ledger, affected-claim authority, and complete audit material for every affected event before returning a report. Event-audit divergence fails closed as `EVENT_AUDIT_INVALID` rather than exposing an unaudited event anchor.
 
@@ -218,7 +218,9 @@ The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary fi
 - backup path and SHA-256 for write migration;
 - timestamps, migrated counts, and quarantined v0.1 row IDs.
 
-These reports are metadata-first. Exact serialized field names remain an unreleased alpha interface.
+These reports are metadata-first. Exact serialized fields, markers, ordering,
+streams, and exit codes are frozen in the [v0.3 CLI
+contract](CLI_CONTRACT.md).
 
 ## Identity and isolation rules
 

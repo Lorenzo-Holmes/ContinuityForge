@@ -83,9 +83,18 @@ Every supported starting schema needs at least these cases:
 7. preflight and inspection leave the main database, WAL, schema, and logical row counts unchanged; SQLite may update coordination bytes in an already-existing `-shm` file.
 8. backup publication preserves existing regular artifacts, rejects symbolic-link targets, verifies file identity/type, and retains POSIX mode `0600`.
 
-`migration-check` is implemented but unreleased. Its CLI path sets `create_backup=False`; tests must assert no database, missing sidecar, backup, schema, or logical row creation/mutation. When inspecting a live WAL database, SQLite may update coordination bytes in an already-existing `-shm` file; callers that require byte-for-byte filesystem immutability must inspect a private consistent copy. Its report schema is not frozen.
+`migration-check` is implemented but unreleased. Its CLI path sets
+`create_backup=False`; tests must assert no database, missing sidecar, backup,
+schema, or logical row creation/mutation. When inspecting a live WAL database,
+SQLite may update coordination bytes in an already-existing `-shm` file;
+callers that require byte-for-byte filesystem immutability must inspect a
+private consistent copy. Its JSON shape and stream/exit semantics are frozen
+by the [v0.3 CLI contract](CLI_CONTRACT.md).
 
-CLI lifecycle tests cover all commands, not only the three alpha commands. Only `ingest` and `demo` are create-capable; governance/event writes require an existing schema-v3 database, ordinary reads require an existing database without migrating it, and `migrate` is the sole explicit upgrade route.
+CLI lifecycle tests cover all commands, not only the three preview commands.
+Only `ingest` and `demo` are create-capable; governance/event writes require an
+existing schema-v3 database, ordinary reads require an existing database
+without migrating it, and `migrate` is the sole explicit upgrade route.
 
 ## Redaction assertions
 

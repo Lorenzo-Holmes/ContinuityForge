@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Lorenzo-Holmes/ContinuityForge/main/schemas/source-impact-v0.3.schema.json",
+  "title": "ContinuityForge Source Impact Report v0.3",
+  "description": "Metadata-only, report-only assessment of evidence anchored to one source revision against a later revision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "report_only",
+    "source",
+    "from_snapshot",
+    "to_snapshot",
+    "summary",
+    "affected"
+  ],
+  "properties": {
+    "schema": {
+      "const": "continuityforge.source-impact/v0.3"
+    },
+    "report_only": {
+      "const": true
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "from_snapshot": {
+      "$ref": "#/$defs/snapshot"
+    },
+    "to_snapshot": {
+      "$ref": "#/$defs/snapshot"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "affected": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/affectedEvidence"
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "impactOutcome": {
+      "type": "string",
+      "enum": [
+        "SAME_POSITION",
+        "EXACT_MOVED_UNIQUE",
+        "EXACT_MOVED_AMBIGUOUS",
+        "NO_EXACT_MATCH",
+        "INVALID_EVIDENCE"
+      ]
+    },
+    "impactErrorCode": {
+      "type": "string",
+      "enum": [
+        "EVIDENCE_REQUIRED",
+        "SNAPSHOT_ID_REQUIRED",
+        "INVALID_LINE_RANGE",
+        "QUOTE_REQUIRED",
+        "INVALID_QUOTE",
+        "INVALID_UNICODE_QUOTE",
+        "QUOTE_SPAN_MISMATCH",
+        "INVALID_CONTENT_HASH",
+        "CONTENT_HASH_MISMATCH"
+      ]
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_line",
+        "end_line"
+      ],
+      "properties": {
+        "start_line": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "end_line": {
+          "$ref": "#/$defs/positiveInteger"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "source_key",
+        "continuity"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "source_key": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "continuity": {
+          "$ref": "#/$defs/nonEmptyText"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_id",
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "snapshot_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "version": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "affected_evidence",
+        "claims",
+        "events",
+        "outcomes"
+      ],
+      "properties": {
+        "affected_evidence": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "claims": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "events": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "outcomes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "SAME_POSITION",
+            "EXACT_MOVED_UNIQUE",
+            "EXACT_MOVED_AMBIGUOUS",
+            "NO_EXACT_MATCH",
+            "INVALID_EVIDENCE"
+          ],
+          "properties": {
+            "SAME_POSITION": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            "EXACT_MOVED_UNIQUE": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            "EXACT_MOVED_AMBIGUOUS": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            "NO_EXACT_MATCH": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            "INVALID_EVIDENCE": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            }
+          }
+        }
+      }
+    },
+    "affectedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aggregate_type",
+        "aggregate_id",
+        "evidence_id",
+        "persona_id",
+        "governance_status",
+        "impact"
+      ],
+      "properties": {
+        "aggregate_type": {
+          "type": "string",
+          "enum": [
+            "claim",
+            "event"
+          ]
+        },
+        "aggregate_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "evidence_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "persona_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "governance_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "impact": {
+          "$ref": "#/$defs/impact"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "aggregate_type": {
+                "const": "claim"
+              }
+            },
+            "required": [
+              "aggregate_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "governance_status": {
+                "type": "string",
+                "enum": [
+                  "PROPOSED",
+                  "AUTHORIZED",
+                  "REJECTED",
+                  "DISPUTED"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "governance_status": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "classification",
+        "old_snapshot_id",
+        "target_snapshot_id",
+        "target_snapshot_version",
+        "original_span",
+        "candidates",
+        "reason_code",
+        "reason",
+        "error_code"
+      ],
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/impactOutcome"
+        },
+        "classification": {
+          "$ref": "#/$defs/impactOutcome"
+        },
+        "old_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_snapshot_id": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "target_snapshot_version": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "original_span": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/span"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 50000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "EXACT_AT_ORIGINAL_SPAN",
+            "EXACT_AT_ONE_DIFFERENT_SPAN",
+            "EXACT_AT_MULTIPLE_DIFFERENT_SPANS",
+            "EXACT_QUOTE_NOT_FOUND",
+            "EVIDENCE_FAILED_VALIDATION"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/nonEmptyText"
+        },
+        "error_code": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/impactErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "SAME_POSITION"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "classification": {
+                "const": "SAME_POSITION"
+              },
+              "reason_code": {
+                "const": "EXACT_AT_ORIGINAL_SPAN"
+              },
+              "error_code": {
+                "type": "null"
+              },
+              "old_snapshot_id": {
+                "$ref": "#/$defs/nonEmptyText"
+              },
+              "original_span": {
+                "$ref": "#/$defs/span"
+              },
+              "candidates": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "EXACT_MOVED_UNIQUE"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "classification": {
+                "const": "EXACT_MOVED_UNIQUE"
+              },
+              "reason_code": {
+                "const": "EXACT_AT_ONE_DIFFERENT_SPAN"
+              },
+              "error_code": {
+                "type": "null"
+              },
+              "old_snapshot_id": {
+                "$ref": "#/$defs/nonEmptyText"
+              },
+              "original_span": {
+                "$ref": "#/$defs/span"
+              },
+              "candidates": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "EXACT_MOVED_AMBIGUOUS"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "classification": {
+                "const": "EXACT_MOVED_AMBIGUOUS"
+              },
+              "reason_code": {
+                "const": "EXACT_AT_MULTIPLE_DIFFERENT_SPANS"
+              },
+              "error_code": {
+                "type": "null"
+              },
+              "old_snapshot_id": {
+                "$ref": "#/$defs/nonEmptyText"
+              },
+              "original_span": {
+                "$ref": "#/$defs/span"
+              },
+              "candidates": {
+                "minItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "NO_EXACT_MATCH"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "classification": {
+                "const": "NO_EXACT_MATCH"
+              },
+              "reason_code": {
+                "const": "EXACT_QUOTE_NOT_FOUND"
+              },
+              "error_code": {
+                "type": "null"
+              },
+              "old_snapshot_id": {
+                "$ref": "#/$defs/nonEmptyText"
+              },
+              "original_span": {
+                "$ref": "#/$defs/span"
+              },
+              "candidates": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "INVALID_EVIDENCE"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "classification": {
+                "const": "INVALID_EVIDENCE"
+              },
+              "reason_code": {
+                "const": "EVIDENCE_FAILED_VALIDATION"
+              },
+              "error_code": {
+                "$ref": "#/$defs/impactErrorCode"
+              },
+              "candidates": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

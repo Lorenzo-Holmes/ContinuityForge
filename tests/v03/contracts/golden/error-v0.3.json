@@ -1,0 +1,6 @@
+{
+  "code": "INVALID_ARGUMENT",
+  "error": "ValueError",
+  "message": "from_version must be earlier than to_version",
+  "schema": "continuityforge.error/v0.3"
+}

@@ -2,7 +2,11 @@
 
 ## Status
 
-Schema version 3, strict structural fingerprinting, read-only preflight, verified backup creation, transactional migration, Source-audit hardening, and functional v0.1 quarantine are **implemented in the unreleased v0.3 development tree**. The commands and report schema remain pre-release interfaces.
+Schema version 3, strict structural fingerprinting, read-only preflight,
+verified backup creation, transactional migration, Source-audit hardening, and
+functional v0.1 quarantine are **implemented in the unreleased v0.3
+development tree**. The commands are unreleased; their JSON shape, stream, and
+exit semantics are frozen by the [v0.3 CLI contract](CLI_CONTRACT.md).
 
 ```bash
 # Existing database; performs checks only and creates no backup.
@@ -154,10 +158,12 @@ Unknown/extended v0.1 columns are not an admitted alpha migration shape; preflig
 
 ## Machine-readable report
 
-`MigrationReport.to_dict()` emits stable diagnostic metadata and no complete source bodies. This is the current alpha shape:
+`MigrationReport.to_dict()` emits stable diagnostic metadata and no complete
+source bodies. Its formal v0.3 shape is:
 
 ```json
 {
+  "schema": "continuityforge.migration-report/v0.3",
   "mode": "strict",
   "source": {
     "kind": "v0.2",
@@ -201,7 +207,15 @@ Unknown/extended v0.1 columns are not an admitted alpha migration shape; preflig
 }
 ```
 
-The `source` and post-migration `target` objects are structural `SchemaFingerprint` values. A successful write report also records the operator-relevant backup path/hash, migrated counts, and quarantined v0.1 record IDs. Inside issue diagnostics, sensitive fields such as quote, content, text, title, summary, details, origin path, and ledger payload serialize only a `{redacted, type, length, sha256}` descriptor; absolute paths and overlong strings in `actual` receive the same treatment. Exact fields remain subject to change until v0.3 is released.
+The `source` and post-migration `target` objects are structural
+`SchemaFingerprint` values. A successful write report also records the
+operator-relevant backup path/hash, migrated counts, and quarantined v0.1
+record IDs. Inside issue diagnostics, sensitive fields such as quote, content,
+text, title, summary, details, origin path, and ledger payload serialize only a
+`{redacted, type, length, sha256}` descriptor; absolute paths and overlong
+strings in `actual` receive the same treatment. Machine fields are frozen by
+the formal schema; diagnostic prose may be clarified without changing its
+stable code.
 
 ## Post-migration verification
 

@@ -45,7 +45,10 @@ Implemented, unreleased v0.3.0a2 work strengthens those guarantees with:
 - explicit CLI database lifecycles with no ordinary-command implicit migration;
 - functional v0.1 quarantine that preserves bad rows without mapping them into active authority.
 
-The alpha currently passes the complete regression suite, but its new CLI/report schemas can still change before release. See [Migration v3](docs/MIGRATION_V3.md) and [Snapshot Impact](docs/SNAPSHOT_IMPACT.md).
+The alpha currently passes the complete regression suite. Its v0.3 machine
+outputs are frozen by the [CLI contract](docs/CLI_CONTRACT.md) and the bundled
+JSON Schemas. See [Migration v3](docs/MIGRATION_V3.md) and [Snapshot
+Impact](docs/SNAPSHOT_IMPACT.md).
 
 ## What ContinuityForge does not guarantee
 
@@ -185,11 +188,13 @@ A missing existing-database target fails with `DATABASE_NOT_FOUND` and no filesy
 
 ## v0.3.0a2 preview CLI—implemented, unreleased
 
-These commands are executable in the development tree. Their current flags are tested, but the commands and JSON report schemas remain pre-release interfaces.
+These commands are executable in the development tree. Their flags, streams,
+exit codes, and JSON report shapes are tested against the formal
+[v0.3 machine contract](docs/CLI_CONTRACT.md).
 
-| Alpha command | Contract |
+| Preview command | Contract |
 |---|---|
-| `source-impact` | Open an existing database read-only and emit a `continuityforge.source-impact/v0.3-alpha` metadata-only summary for claim/event evidence; no governance mutation. |
+| `source-impact` | Open an existing database read-only and emit a `continuityforge.source-impact/v0.3` metadata-only summary for claim/event evidence; no governance mutation. |
 | `migration-check` | Inspect an existing database without creating a database, backup, schema object, or write transaction. |
 | `migrate` | Require an existing database, create and verify a consistent backup, then run a transactional v0.1/v0.2 to v0.3 migration. |
 
@@ -247,7 +252,10 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
   --continuity alpha --source-key north-pier-field-log
 ```
 
-The v0.3.0a2 development tree can inspect the imported revisions with the `source-impact` syntax above. The report is metadata-only and remains an unreleased alpha schema. Demo data licensing is documented in [Demo Licenses](docs/DEMO_LICENSES.md).
+The v0.3.0a2 development tree can inspect the imported revisions with the
+`source-impact` syntax above. The report is metadata-only and follows the
+formal `continuityforge.source-impact/v0.3` schema. Demo data licensing is
+documented in [Demo Licenses](docs/DEMO_LICENSES.md).
 
 ## Documentation
 
@@ -256,6 +264,7 @@ The v0.3.0a2 development tree can inspect the imported revisions with the `sourc
 | [v0.1 baseline](docs/V0_1_BASELINE.md) | Frozen observable compatibility contract. |
 | [v0.2 design](docs/V0_2_DESIGN.md) | Versioned sources, evidence, governance, ledger, and compiler design. |
 | [v0.3 decisions](docs/V0_3_DECISIONS.md) | Accepted owner trust and product boundaries. |
+| [CLI contract](docs/CLI_CONTRACT.md) | Frozen JSON schemas, streams, exit codes, and ordering rules. |
 | [Architecture](docs/ARCHITECTURE.md) | Components, flows, and dependency rules. |
 | [Data Model](docs/DATA_MODEL.md) | Entities, scopes, time, access, and report shapes. |
 | [Threat Model](docs/THREAT_MODEL.md) | Assets, attackers, mitigations, and residual risks. |

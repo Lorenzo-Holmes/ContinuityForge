@@ -59,7 +59,7 @@ def test_source_impact_covers_claims_events_and_four_exact_outcomes(
             source_id, continuity="alpha", from_version=1, to_version=2
         )
         assert report.report_only is True
-        assert report.to_dict()["schema"] == "continuityforge.source-impact/v0.3-alpha"
+        assert report.to_dict()["schema"] == "continuityforge.source-impact/v0.3"
         assert len(report.from_snapshot_sha256) == 64
         assert len(report.to_snapshot_sha256) == 64
         assert report.claim_count == 2

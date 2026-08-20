@@ -1,0 +1,65 @@
+{
+  "changed": true,
+  "checks": {
+    "available_free_bytes": 999999999,
+    "backup_path": "project.db.pre-v3.bak",
+    "backup_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "database_bytes": 8192,
+    "foreign_key_violations": 0,
+    "quick_check": "ok",
+    "required_free_bytes": 1048576
+  },
+  "finished_at": "2026-08-20T00:00:02Z",
+  "is_ready": true,
+  "issues": [],
+  "migrated_counts": {
+    "claims": 1,
+    "decisions": 1,
+    "event_evidence": 0,
+    "events": 0,
+    "evidence": 1,
+    "ledger": 4,
+    "legacy_records": 2,
+    "snapshots": 1,
+    "sources": 1
+  },
+  "mode": "strict",
+  "quarantine": {
+    "count": 0,
+    "records": []
+  },
+  "schema": "continuityforge.migration-report/v0.3",
+  "source": {
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "indexes": [],
+    "kind": "v0.1",
+    "metadata_version": null,
+    "tables": [
+      "claims",
+      "source_snapshots"
+    ],
+    "triggers": [],
+    "user_version": 0
+  },
+  "started_at": "2026-08-20T00:00:00Z",
+  "status": "migrated",
+  "succeeded": true,
+  "target": {
+    "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "indexes": [
+      "idx_snapshots_source_version"
+    ],
+    "kind": "v0.3",
+    "metadata_version": 3,
+    "tables": [
+      "claim_proposals",
+      "source_snapshots",
+      "sources"
+    ],
+    "triggers": [
+      "continuityforge_sources_no_update"
+    ],
+    "user_version": 3
+  },
+  "target_version": 3
+}

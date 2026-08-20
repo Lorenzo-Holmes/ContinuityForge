@@ -1,0 +1,140 @@
+{
+  "affected": [
+    {
+      "aggregate_id": "claim-same",
+      "aggregate_type": "claim",
+      "evidence_id": "evidence-claim-same",
+      "governance_status": "PROPOSED",
+      "impact": {
+        "candidates": [
+          {
+            "end_line": 1,
+            "start_line": 1
+          }
+        ],
+        "classification": "SAME_POSITION",
+        "error_code": null,
+        "old_snapshot_id": "snp_0001",
+        "original_span": {
+          "end_line": 1,
+          "start_line": 1
+        },
+        "outcome": "SAME_POSITION",
+        "reason": "exact quote remains at the original line span",
+        "reason_code": "EXACT_AT_ORIGINAL_SPAN",
+        "target_snapshot_id": "snp_0002",
+        "target_snapshot_version": 2
+      },
+      "persona_id": "persona"
+    },
+    {
+      "aggregate_id": "claim-unique",
+      "aggregate_type": "claim",
+      "evidence_id": "evidence-claim-unique",
+      "governance_status": "PROPOSED",
+      "impact": {
+        "candidates": [
+          {
+            "end_line": 3,
+            "start_line": 3
+          }
+        ],
+        "classification": "EXACT_MOVED_UNIQUE",
+        "error_code": null,
+        "old_snapshot_id": "snp_0001",
+        "original_span": {
+          "end_line": 2,
+          "start_line": 2
+        },
+        "outcome": "EXACT_MOVED_UNIQUE",
+        "reason": "exact quote occurs once at a different line span",
+        "reason_code": "EXACT_AT_ONE_DIFFERENT_SPAN",
+        "target_snapshot_id": "snp_0002",
+        "target_snapshot_version": 2
+      },
+      "persona_id": "persona"
+    },
+    {
+      "aggregate_id": "event-ambiguous",
+      "aggregate_type": "event",
+      "evidence_id": "evidence-event-ambiguous",
+      "governance_status": null,
+      "impact": {
+        "candidates": [
+          {
+            "end_line": 4,
+            "start_line": 4
+          },
+          {
+            "end_line": 6,
+            "start_line": 6
+          }
+        ],
+        "classification": "EXACT_MOVED_AMBIGUOUS",
+        "error_code": null,
+        "old_snapshot_id": "snp_0001",
+        "original_span": {
+          "end_line": 3,
+          "start_line": 3
+        },
+        "outcome": "EXACT_MOVED_AMBIGUOUS",
+        "reason": "exact quote occurs at multiple different line spans",
+        "reason_code": "EXACT_AT_MULTIPLE_DIFFERENT_SPANS",
+        "target_snapshot_id": "snp_0002",
+        "target_snapshot_version": 2
+      },
+      "persona_id": "persona"
+    },
+    {
+      "aggregate_id": "event-gone",
+      "aggregate_type": "event",
+      "evidence_id": "evidence-event-gone",
+      "governance_status": null,
+      "impact": {
+        "candidates": [],
+        "classification": "NO_EXACT_MATCH",
+        "error_code": null,
+        "old_snapshot_id": "snp_0001",
+        "original_span": {
+          "end_line": 4,
+          "start_line": 4
+        },
+        "outcome": "NO_EXACT_MATCH",
+        "reason": "exact quote does not occur in the target snapshot",
+        "reason_code": "EXACT_QUOTE_NOT_FOUND",
+        "target_snapshot_id": "snp_0002",
+        "target_snapshot_version": 2
+      },
+      "persona_id": "persona"
+    }
+  ],
+  "from_snapshot": {
+    "sha256": "952988ca41aaa37251acb892ee3fab71b9a6360683c8ee7cb1f8c13095c23deb",
+    "snapshot_id": "snp_0001",
+    "version": 1
+  },
+  "report_only": true,
+  "schema": "continuityforge.source-impact/v0.3",
+  "source": {
+    "continuity": "alpha",
+    "source_id": "src_0001",
+    "source_key": "story"
+  },
+  "summary": {
+    "affected_evidence": 4,
+    "claims": 2,
+    "events": 2,
+    "outcomes": {
+      "EXACT_MOVED_AMBIGUOUS": 1,
+      "EXACT_MOVED_UNIQUE": 1,
+      "INVALID_EVIDENCE": 0,
+      "NO_EXACT_MATCH": 1,
+      "SAME_POSITION": 1
+    }
+  },
+  "to_snapshot": {
+    "sha256": "1167fbc6df57b39e474418178e1e311d11591dc096de2f698b4fe2b68cd87ea4",
+    "snapshot_id": "snp_0002",
+    "version": 2
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "command_lifecycle": {
+    "claim-add": "write-existing",
+    "claim-list": "read-existing",
+    "claim-propose": "write-existing",
+    "claim-review": "write-existing",
+    "compile": "read-existing",
+    "demo": "create-capable",
+    "event-add": "write-existing",
+    "ingest": "create-capable",
+    "ledger-show": "read-existing",
+    "ledger-verify": "read-existing",
+    "migrate": "explicit-migrate",
+    "migration-check": "read-existing",
+    "source-impact": "read-existing",
+    "source-list": "read-existing",
+    "validate": "read-existing"
+  },
+  "exit_codes": {
+    "governance_failed": 4,
+    "ledger_failed": 5,
+    "ok": 0,
+    "schema_failed": 6,
+    "usage": 2,
+    "validation_failed": 3
+  },
+  "json_schemas": {
+    "error": "continuityforge.error/v0.3",
+    "migration_report": "continuityforge.migration-report/v0.3",
+    "source_impact": "continuityforge.source-impact/v0.3"
+  },
+  "migration_modes": [
+    "strict",
+    "quarantine"
+  ],
+  "source_impact_aliases": {
+    "source_identity": [
+      "--source-key",
+      "--source-id"
+    ],
+    "target_version": [
+      "--target-version",
+      "--to-version"
+    ]
+  },
+  "stream_contract": {
+    "argparse_usage": {
+      "encoding": "text",
+      "exit_code": 2,
+      "stream": "stderr"
+    },
+    "migration_check_not_ready": {
+      "encoding": "json",
+      "exit_code": 6,
+      "stream": "stdout"
+    },
+    "runtime_error": {
+      "encoding": "json",
+      "schema": "continuityforge.error/v0.3",
+      "stream": "stderr"
+    },
+    "success": {
+      "encoding": "json",
+      "exit_code": 0,
+      "stream": "stdout"
+    }
+  }
+}
