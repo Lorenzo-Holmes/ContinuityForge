@@ -9,16 +9,16 @@ ContinuityForge is a local, dependency-light compiler above RAG and memory store
 ## Status
 
 - **v0.1:** frozen observable compatibility baseline.
-- **v0.2.0:** current released CLI, SQLite, governance, ledger, and Memory Pack workflow.
-- **v0.3.0a4:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
+- **v0.2.0:** current stable CLI, SQLite, governance, ledger, and Memory Pack workflow.
+- **v0.3.0a4:** current alpha pre-release under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
 
-The v0.1 and v0.2 contracts remain intact while v0.3 is developed. The alpha
-feature set remains unreleased, while the documented v0.3 command, stream,
-exit-code, and machine-report contracts are frozen and tested.
+The v0.1 and v0.2 contracts remain intact in the v0.3.0a4 alpha pre-release.
+The documented v0.3 command, stream, exit-code, and machine-report contracts
+are frozen and tested, but remain pre-release interfaces until stable v0.3.
 
 ## What ContinuityForge guarantees
 
-Released v0.2 behavior provides:
+Stable v0.2 behavior provides:
 
 - immutable, SHA-256-addressed `SourceSnapshot` revisions;
 - 1-based, inclusive, exact-line evidence spans;
@@ -32,7 +32,7 @@ Released v0.2 behavior provides:
 - JSON Memory Packs retaining claim and evidence provenance;
 - zero third-party runtime dependencies.
 
-Implemented, unreleased v0.3.0a4 work strengthens those guarantees with:
+The v0.3.0a4 alpha pre-release strengthens those guarantees with:
 
 - strict built-in-integer evidence coordinates;
 - bounded, control-aware source ingestion;
@@ -104,7 +104,7 @@ flowchart LR
 
 Read [Architecture](docs/ARCHITECTURE.md), [Data Model](docs/DATA_MODEL.md), and [Threat Model](docs/THREAT_MODEL.md) for the full boundaries.
 
-## Quick start: released v0.2 CLI
+## Quick start: stable v0.2 CLI
 
 Requirements: Python 3.10 or newer.
 
@@ -160,9 +160,9 @@ continuityforge --db forge.db compile \
 
 `--cutoff` filters knowledge time. Valid-time filtering is independent and activates only when `--valid-at` is supplied.
 
-## Released v0.2 command map
+## Stable v0.2 command map
 
-| Command | Released purpose |
+| Command | Stable purpose |
 |---|---|
 | `ingest` | Import `.txt`, `.md`, `.markdown`, `.json`, or `.srt` as an immutable source version. |
 | `source-list` | List logical sources, optionally scoped to one continuity. |
@@ -177,7 +177,7 @@ continuityforge --db forge.db compile \
 | `ledger-show` | Print ordered ledger metadata. |
 | `demo` | Run the synthetic Alpha/Beta isolation and future-knowledge scenario. |
 
-Use `continuityforge COMMAND --help` for released options.
+Use `continuityforge COMMAND --help` for stable v0.2 options.
 
 ## v0.3.0a4 database lifecycle
 
@@ -192,13 +192,13 @@ Every command now declares how it may interact with the database path:
 
 A missing existing-database target fails with `DATABASE_NOT_FOUND` and no filesystem side effects. An ordinary command aimed at a recognized legacy database fails closed instead of constructing writable `Storage`; run `migration-check`, then `migrate` explicitly.
 
-## v0.3.0a4 preview CLI—implemented, unreleased
+## v0.3.0a4 alpha pre-release CLI
 
-These commands are executable in the development tree. Their flags, streams,
+These commands are executable in the v0.3.0a4 alpha pre-release. Their flags, streams,
 exit codes, and JSON report shapes are tested against the formal
 [v0.3 machine contract](docs/CLI_CONTRACT.md).
 
-| Preview command | Contract |
+| Alpha command | Contract |
 |---|---|
 | `source-impact` | Open an existing database read-only and emit a `continuityforge.source-impact/v0.3` metadata-only summary for claim/event evidence; no governance mutation. |
 | `migration-check` | Inspect an existing database without creating a database, backup, schema object, or write transaction. |
@@ -237,7 +237,7 @@ Affected event evidence is admitted to an impact report only after the complete 
 
 ## Deterministic Impact API
 
-The v0.3.0a4 pure-domain Impact engine is available to library callers in the development tree:
+The v0.3.0a4 pure-domain Impact engine is available to library callers in the alpha pre-release:
 
 ```python
 from continuityforge.impact import analyze_evidence_impact
@@ -261,7 +261,7 @@ python examples/north_pier/run_demo.py --output-dir demo-output/north-pier --res
 
 The package-API script creates three authorized claim anchors plus one operator-event anchor, imports both revisions, verifies all four non-error impact outcomes, and writes a metadata-only JSON report.
 
-Released ingestion can import both versions today:
+Stable v0.2 ingestion can import both versions:
 
 ```bash
 continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v1.txt \
@@ -270,7 +270,7 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
   --continuity alpha --source-key north-pier-field-log
 ```
 
-The v0.3.0a4 development tree can inspect the imported revisions with the
+The v0.3.0a4 alpha pre-release can inspect the imported revisions with the
 `source-impact` syntax above. The report is metadata-only and follows the
 formal `continuityforge.source-impact/v0.3` schema. Demo data licensing is
 documented in [Demo Licenses](docs/DEMO_LICENSES.md).

@@ -17,7 +17,7 @@ body:
       label: Issue type
       options:
         - Broken link or command
-        - Released/planned status is unclear
+        - Stable/pre-release/planned status is unclear
         - Contract contradicts implementation
         - Security or disclosure wording is unclear
         - Missing example

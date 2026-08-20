@@ -4,8 +4,9 @@
 
 | Version | Security status |
 |---|---|
-| `main` / unreleased v0.3.0a4 | Actively developed and tested |
-| `0.2.x` | Current supported release line |
+| `0.3.0a4` | Current alpha pre-release; actively tested |
+| `main` | Development branch; actively tested |
+| `0.2.x` | Current supported stable release line |
 | `0.1.x` | Frozen compatibility reference; upgrade recommended |
 
 ## Reporting a vulnerability
@@ -59,4 +60,4 @@ The following are product limitations rather than vulnerabilities unless documen
 - lack of fuzzy or LLM-based impact matching;
 - lack of protection from the trusted database owner;
 - lack of built-in encryption or remote authentication;
-- changes to explicitly unreleased v0.3 alpha commands or report schemas that do not bypass a documented boundary.
+- changes within documented v0.3 alpha pre-release commands or report schemas that do not bypass a documented boundary.

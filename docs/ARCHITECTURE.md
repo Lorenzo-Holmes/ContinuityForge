@@ -2,8 +2,8 @@
 
 ## Status vocabulary
 
-- **Released:** available in v0.2.0.
-- **Implemented, unreleased:** present in the v0.3.0a4 development code and tests.
+- **Stable release:** available in v0.2.0.
+- **Alpha pre-release:** available in v0.3.0a4 and covered by the bundled documentation and tests.
 - **Accepted contract:** approved in [V0_3_DECISIONS.md](V0_3_DECISIONS.md); integration may still be in progress.
 - **Deferred:** intentionally outside v0.3.0a4.
 
@@ -87,7 +87,7 @@ The compiler reads only eligible, authorized values and applies exact persona, c
 
 ### CLI and adapters
 
-The v0.2 CLI is released. The development tree also implements the unreleased `source-impact`, `migration-check`, and `migrate` alpha commands. Each command declares one database lifecycle: create-capable, write-existing, read-existing, or explicit-migrate. Only `ingest` and `demo` may create a database; only `migrate` may upgrade a recognized legacy database. Read commands never acquire writable `Storage` merely to inspect a path. These interfaces are tested but must not be treated as stable automation contracts before v0.3 release. Restore and deployment activation remain operator workflows.
+The v0.2 CLI is the stable release. The v0.3.0a4 alpha pre-release adds `source-impact`, `migration-check`, and `migrate`. Each command declares one database lifecycle: create-capable, write-existing, read-existing, or explicit-migrate. Only `ingest` and `demo` may create a database; only `migrate` may upgrade a recognized legacy database. Read commands never acquire writable `Storage` merely to inspect a path. These interfaces are tested but must not be treated as stable automation contracts before the stable v0.3 release. Restore and deployment activation remain operator workflows.
 
 ## Write path
 

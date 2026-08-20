@@ -47,7 +47,7 @@ or deletion.
 
 The event-owned custody case is explicitly marked `operator_authored`. `NarrativeEvent` is not an LLM proposal type. Claim-owned descriptors represent evidence anchors only and do not imply authorization.
 
-## Import the versions with the released v0.2 CLI
+## Import the versions with the stable v0.2 CLI
 
 From the repository root:
 
@@ -60,7 +60,7 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
 
 The second import creates v2 because the latest content changed. Importing v1 again after v2 would create v3, not reuse the historical v1 row.
 
-## Unreleased alpha impact command
+## v0.3.0a4 alpha pre-release impact command
 
 The pure-domain v0.3 API can analyze an `EvidenceRef` after the caller resolves and verifies the target snapshot:
 
@@ -70,7 +70,7 @@ from continuityforge.impact import analyze_evidence_impact
 report = analyze_evidence_impact(evidence, target_snapshot)
 ```
 
-The v0.3.0a4 development tree implements storage-aware aggregation for claim and event evidence:
+The v0.3.0a4 alpha pre-release includes storage-aware aggregation for claim and event evidence:
 
 ```bash
 continuityforge --db north-pier.db source-impact \
@@ -80,6 +80,6 @@ continuityforge --db north-pier.db source-impact \
   --target-version 2
 ```
 
-The command is read-only and metadata-only. The two ingest commands alone create no evidence owners, so the first report has an empty `affected` list; add evidence-backed claims/events against v1 to exercise aggregation. `source-impact` is implemented but unreleased, and its JSON report schema is not frozen.
+The command is read-only and metadata-only. The two ingest commands alone create no evidence owners, so the first report has an empty `affected` list; add evidence-backed claims/events against v1 to exercise aggregation. `source-impact` is an alpha pre-release interface, and its formal JSON report schema is frozen for this pre-release.
 
 Impact remains report-only. No result in this fixture authorizes, rejects, disputes, or rewrites a claim or event.

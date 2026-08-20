@@ -1,5 +1,5 @@
 name: Bug report
-description: Report reproducible behavior that violates a released contract.
+description: Report reproducible behavior that violates a stable or alpha pre-release contract.
 title: "[Bug]: "
 labels:
   - bug
@@ -19,9 +19,9 @@ body:
         - NarrativeEvent handling
         - Memory Pack compilation
         - EventLedger verification
-        - Snapshot Impact (v0.3 development)
-        - Migration or backup/restore (v0.3 development)
-        - Read-only inspection (v0.3 development)
+        - Snapshot Impact (v0.3 alpha pre-release)
+        - Migration or backup/restore (v0.3 alpha pre-release)
+        - Read-only inspection (v0.3 alpha pre-release)
         - Documentation or packaging
         - Other
     validations:
@@ -30,7 +30,7 @@ body:
     id: version
     attributes:
       label: ContinuityForge version or commit
-      placeholder: "0.2.0 or commit SHA"
+      placeholder: "0.3.0a4, 0.2.0, or commit SHA"
     validations:
       required: true
   - type: input

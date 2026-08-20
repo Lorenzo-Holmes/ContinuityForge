@@ -4,8 +4,8 @@
 
 Schema version 3, strict structural fingerprinting, read-only preflight,
 verified backup creation, transactional migration, Source-audit hardening, and
-functional v0.1 quarantine are **implemented in the unreleased v0.3
-development tree**. The commands are unreleased; their JSON shape, stream, and
+functional v0.1 quarantine are **included in the v0.3.0a4 alpha pre-release**.
+The commands are pre-release interfaces; their JSON shape, stream, and
 exit semantics are frozen by the [v0.3 CLI contract](CLI_CONTRACT.md).
 
 ```bash

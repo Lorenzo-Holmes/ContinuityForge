@@ -1,11 +1,11 @@
 ## Summary
 
-<!-- What changed and why? Keep released behavior separate from unreleased v0.3 alpha work. -->
+<!-- What changed and why? Keep stable behavior separate from v0.3 alpha pre-release work. -->
 
 ## Contract impact
 
 - Affected layer(s):
-- Released behavior changed: yes / no
+- Stable or alpha pre-release behavior changed: stable / alpha / no
 - Database or migration impact: yes / no
 - Disclosure surface changed: yes / no
 - LLM-assisted behavior involved: yes / no
@@ -30,7 +30,7 @@ python -m compileall -q src tests
 - [ ] I added deterministic tests for new behavior and fail-closed edge cases.
 - [ ] I considered database-owner trust, ledger/authority integrity, backup, restore, and rollback where relevant.
 - [ ] I kept administrative reports metadata-first and added redaction tests for any new report field.
-- [ ] I marked v0.3 alpha commands, flags, and report schemas as implemented but unreleased.
+- [ ] I marked v0.3 alpha commands, flags, and report schemas as pre-release interfaces.
 - [ ] I updated the README, changelog, design/security docs, and demo license map where relevant.
 - [ ] I used only synthetic, redistributable fixtures and removed secrets or personal data.
 

@@ -55,7 +55,7 @@ body:
     attributes:
       label: Status awareness
       options:
-        - label: I distinguished released behavior from implemented but unreleased v0.3 alpha behavior.
+        - label: I distinguished stable behavior from v0.3 alpha pre-release behavior.
           required: true
         - label: I did not assume that model confidence grants authority.
           required: true

@@ -88,7 +88,7 @@ See [Security Testing](docs/SECURITY_TESTING.md).
 
 - Update README or the relevant architecture document when behavior or boundaries change.
 - Put user-visible changes under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
-- Clearly label v0.3 alpha commands and schemas as implemented but unreleased.
+- Clearly label v0.3 alpha commands and schemas as alpha pre-release interfaces.
 - Do not present a pre-release command or JSON shape as a stable release contract.
 
 ## Pull requests

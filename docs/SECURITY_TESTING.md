@@ -1,6 +1,6 @@
 # Security Testing
 
-This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a4 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
+This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the stable v0.1/v0.2 contracts and the v0.3.0a4 alpha pre-release. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
 
 ## Test layers
 
@@ -107,7 +107,7 @@ Every supported starting schema needs at least these cases:
 12. v0.1 creation backfills carry Material v2 directly without opt-in; eligible empty v0.2 backfills require explicit opt-in and a verified backup, carry Material v2 directly, create no attestation entry, and leave report attestation counts at zero;
 13. `migration-check` with explicit material acceptance may be ready without a backup, while a library write with backup disabled fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
 
-`migration-check` is implemented but unreleased. Its CLI path sets
+`migration-check` is included in the v0.3.0a4 alpha pre-release. Its CLI path sets
 `create_backup=False`; tests must assert no database, missing sidecar, backup,
 schema, or logical row creation/mutation. With the explicit material flag it
 may report a ready plan, but this does not relax the actual write backup gate.
@@ -117,7 +117,7 @@ callers that require byte-for-byte filesystem immutability must inspect a
 private consistent copy. Its JSON shape and stream/exit semantics are frozen
 by the [v0.3 CLI contract](CLI_CONTRACT.md).
 
-CLI lifecycle tests cover all commands, not only the three preview commands.
+CLI lifecycle tests cover all commands, not only the three alpha pre-release commands.
 Only `ingest` and `demo` are create-capable; governance/event writes require an
 existing schema-v3 database, ordinary reads require an existing database
 without migrating it, and `migrate` is the sole explicit upgrade route.
@@ -144,7 +144,7 @@ A v0.3 release candidate is blocked until:
 - v0.2 regression tests pass without weakening assertions;
 - migration rollback and staged restore tests pass;
 - default administrative-report redaction tests pass;
-- all v0.3 alpha CLI behavior is implemented, tested, documented, and clearly marked unreleased;
+- all v0.3 alpha CLI behavior is implemented, tested, documented, and clearly marked as pre-release;
 - wheel and sdist inspection passes, and North Pier runs from an unpacked sdist against the clean-installed wheel;
 - `SHA256SUMS` contains exactly the wheel and sdist in stable order and both hashes verify;
 - security-relevant changes receive review against [Threat Model](THREAT_MODEL.md).

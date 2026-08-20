@@ -2,7 +2,7 @@
 
 ## Status
 
-The unreleased v0.3.0a4 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
+The v0.3.0a4 alpha pre-release `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
 
 ```bash
 continuityforge --db project.db migration-check --mode strict
