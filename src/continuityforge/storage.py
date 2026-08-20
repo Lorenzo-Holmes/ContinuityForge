@@ -260,7 +260,14 @@ class Storage:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Expose the initialized connection for read-only integration work."""
+        """Return the unsafe writable compatibility escape hatch.
+
+        Callers that need a read-only boundary must use
+        :meth:`Storage.open_readonly` or
+        :class:`~continuityforge.readonly.ReadOnlyProject` instead.  Direct
+        access can change connection-local safety PRAGMAs or issue arbitrary
+        SQL and is therefore outside the trusted Storage API.
+        """
 
         if self._connection is None:
             self.initialize()
@@ -316,6 +323,21 @@ class Storage:
                 connection.row_factory = sqlite3.Row
                 connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("PRAGMA busy_timeout = 30000")
+                # SQLite's REPLACE conflict handler deletes conflicting rows.
+                # DELETE triggers participate in that path only when recursive
+                # triggers are enabled, so this connection-local barrier is
+                # required for every immutable/no-delete table.  It hardens
+                # both newly created databases and the exact published a3
+                # schema without changing its canonical fingerprint.
+                connection.execute("PRAGMA recursive_triggers = ON")
+                recursive_triggers = connection.execute(
+                    "PRAGMA recursive_triggers"
+                ).fetchone()
+                if recursive_triggers is None or int(recursive_triggers[0]) != 1:
+                    raise SchemaError(
+                        "SQLite did not enable recursive triggers required for "
+                        "immutable conflict protection"
+                    )
                 if self.readonly:
                     connection.execute("PRAGMA query_only = ON")
                     query_only = connection.execute("PRAGMA query_only").fetchone()
