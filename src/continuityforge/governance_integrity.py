@@ -13,6 +13,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
+from .audit_material import (
+    CLAIM_ATTESTATION_EVENT,
+    CLAIM_CREATION_EVENT,
+    AuditMaterialDigests,
+    claim_material_digests,
+    parse_material_digests,
+    validate_material_attestation_payload,
+)
 from .models import (
     ClaimProposal,
     EvidenceRef,
@@ -127,6 +135,231 @@ def _decision_payload_matches(
     return all(payload.get(key) == value for key, value in expected.items())
 
 
+def _check_claim_material_digest(
+    *,
+    issues: list[AuthorityIssue],
+    actual: AuditMaterialDigests,
+    expected: AuditMaterialDigests,
+    sequence: int,
+) -> None:
+    if actual.aggregate_sha256 != expected.aggregate_sha256:
+        _issue(
+            issues,
+            "CLAIM_AGGREGATE_MATERIAL_MISMATCH",
+            "claim row differs from its audited v2 material",
+            sequence=sequence,
+        )
+    if actual.evidence_set_sha256 != expected.evidence_set_sha256:
+        _issue(
+            issues,
+            "CLAIM_EVIDENCE_SET_MATERIAL_MISMATCH",
+            "claim evidence differs from its audited v2 material",
+            sequence=sequence,
+        )
+
+
+def _validate_claim_material(
+    claim: ClaimProposal,
+    proposed_entry: LedgerEntry,
+    ledger_entries: Sequence[LedgerEntry],
+    evidence: Sequence[EvidenceRef],
+    issues: list[AuthorityIssue],
+) -> None:
+    """Validate v2 material checkpoints or one explicit legacy attestation."""
+
+    evidence_by_id = {
+        item.evidence_id: item for item in evidence if item.evidence_id is not None
+    }
+    proposed_ids = proposed_entry.payload.get("evidence_ids")
+    if not isinstance(proposed_ids, (list, tuple)) or any(
+        not isinstance(item, str) or not item for item in proposed_ids
+    ):
+        # The legacy correspondence checks report the malformed ID list.  It
+        # also makes a deterministic material reconstruction impossible.
+        _issue(
+            issues,
+            "CLAIM_MATERIAL_EVIDENCE_UNAVAILABLE",
+            "claim material cannot be reconstructed from malformed evidence IDs",
+            sequence=proposed_entry.sequence,
+        )
+        return
+
+    accumulated_ids = list(proposed_ids)
+
+    def expected_for(ids: Sequence[str]) -> AuditMaterialDigests | None:
+        if len(set(ids)) != len(ids) or any(item not in evidence_by_id for item in ids):
+            return None
+        return claim_material_digests(claim, [evidence_by_id[item] for item in ids])
+
+    try:
+        creation_material = parse_material_digests(proposed_entry.payload)
+    except (TypeError, ValueError):
+        _issue(
+            issues,
+            "CLAIM_MATERIAL_VERSION_INVALID",
+            "claim.proposed has malformed or unsupported audit material",
+            sequence=proposed_entry.sequence,
+        )
+        creation_material = None
+        malformed_creation = True
+    else:
+        malformed_creation = False
+
+    attestations = [
+        entry
+        for entry in ledger_entries
+        if entry.event_type == CLAIM_ATTESTATION_EVENT
+    ]
+    baseline_sequence: int | None = None
+    latest_material: tuple[int, AuditMaterialDigests] | None = None
+
+    if creation_material is not None:
+        expected = expected_for(accumulated_ids)
+        if expected is None:
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_EVIDENCE_UNAVAILABLE",
+                "claim creation material names evidence unavailable from storage",
+                sequence=proposed_entry.sequence,
+            )
+        else:
+            _check_claim_material_digest(
+                issues=issues,
+                actual=creation_material,
+                expected=expected,
+                sequence=proposed_entry.sequence,
+            )
+        baseline_sequence = proposed_entry.sequence
+        latest_material = (proposed_entry.sequence, creation_material)
+        if attestations:
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_ATTESTATION_INVALID",
+                "a v2 claim creation entry must not be migration-attested",
+                count=len(attestations),
+            )
+    elif not malformed_creation:
+        if len(attestations) != 1:
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_ATTESTATION_INVALID",
+                "a legacy claim creation entry requires exactly one migration attestation",
+                count=len(attestations),
+            )
+        else:
+            attestation = attestations[0]
+            if (
+                attestation.aggregate_type != "claim"
+                or attestation.aggregate_id != claim.claim_id
+                or attestation.sequence <= proposed_entry.sequence
+            ):
+                _issue(
+                    issues,
+                    "CLAIM_MATERIAL_ATTESTATION_INVALID",
+                    "claim material attestation has invalid aggregate identity or order",
+                    sequence=attestation.sequence,
+                )
+            else:
+                # A baseline attestation binds every legacy evidence event that
+                # precedes it; later additions need their own v2 checkpoints.
+                ids_at_attestation = list(accumulated_ids)
+                for entry in sorted(ledger_entries, key=lambda item: item.sequence):
+                    if (
+                        entry.event_type == "claim.evidence_added"
+                        and proposed_entry.sequence < entry.sequence < attestation.sequence
+                    ):
+                        evidence_id = entry.payload.get("evidence_id")
+                        if isinstance(evidence_id, str) and evidence_id:
+                            ids_at_attestation.append(evidence_id)
+                try:
+                    attested = validate_material_attestation_payload(
+                        attestation.payload,
+                        attested_event_type=CLAIM_CREATION_EVENT,
+                        attested_entry_id=proposed_entry.entry_id,
+                    )
+                except (TypeError, ValueError):
+                    _issue(
+                        issues,
+                        "CLAIM_MATERIAL_ATTESTATION_INVALID",
+                        "claim material attestation payload is invalid",
+                        sequence=attestation.sequence,
+                    )
+                else:
+                    expected = expected_for(ids_at_attestation)
+                    if expected is None:
+                        _issue(
+                            issues,
+                            "CLAIM_MATERIAL_EVIDENCE_UNAVAILABLE",
+                            "claim attestation names evidence unavailable from storage",
+                            sequence=attestation.sequence,
+                        )
+                    else:
+                        _check_claim_material_digest(
+                            issues=issues,
+                            actual=attested,
+                            expected=expected,
+                            sequence=attestation.sequence,
+                        )
+                    baseline_sequence = attestation.sequence
+                    latest_material = (attestation.sequence, attested)
+
+    for entry in sorted(ledger_entries, key=lambda item: item.sequence):
+        if entry.event_type != "claim.evidence_added":
+            continue
+        evidence_id = entry.payload.get("evidence_id")
+        if isinstance(evidence_id, str) and evidence_id:
+            accumulated_ids.append(evidence_id)
+        try:
+            checkpoint = parse_material_digests(entry.payload)
+        except (TypeError, ValueError):
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_VERSION_INVALID",
+                "claim.evidence_added has malformed or unsupported audit material",
+                sequence=entry.sequence,
+            )
+            continue
+        requires_checkpoint = (
+            creation_material is not None
+            or (baseline_sequence is not None and entry.sequence > baseline_sequence)
+        )
+        if checkpoint is None:
+            if requires_checkpoint:
+                _issue(
+                    issues,
+                    "CLAIM_MATERIAL_VERSION_INVALID",
+                    "claim.evidence_added lacks the required v2 material checkpoint",
+                    sequence=entry.sequence,
+                )
+            continue
+        expected = expected_for(accumulated_ids)
+        if expected is None:
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_EVIDENCE_UNAVAILABLE",
+                "claim evidence checkpoint names evidence unavailable from storage",
+                sequence=entry.sequence,
+            )
+        else:
+            _check_claim_material_digest(
+                issues=issues,
+                actual=checkpoint,
+                expected=expected,
+                sequence=entry.sequence,
+            )
+        if latest_material is None or entry.sequence > latest_material[0]:
+            latest_material = (entry.sequence, checkpoint)
+
+    if latest_material is not None:
+        expected_current = claim_material_digests(claim, evidence)
+        _check_claim_material_digest(
+            issues=issues,
+            actual=latest_material[1],
+            expected=expected_current,
+            sequence=latest_material[0],
+        )
+
+
 def replay_claim_authority(
     claim: ClaimProposal,
     decisions: Sequence[GovernanceDecision],
@@ -136,6 +369,7 @@ def replay_claim_authority(
     """Replay a claim's decision chain and bind it to EventLedger entries."""
 
     issues: list[AuthorityIssue] = []
+    supplied_evidence = list(evidence_ids) if evidence_ids is not None else None
     current = GovernanceStatus.PROPOSED
     proposed_entries = [
         entry
@@ -166,6 +400,23 @@ def replay_claim_authority(
                 "CLAIM_PROPOSAL_LEDGER_PAYLOAD_MISMATCH",
                 "claim proposal row and ledger payload differ",
                 sequence=proposed_entries[0].sequence,
+            )
+        if supplied_evidence is None or any(
+            not isinstance(item, EvidenceRef) for item in supplied_evidence
+        ):
+            _issue(
+                issues,
+                "CLAIM_MATERIAL_EVIDENCE_UNAVAILABLE",
+                "complete EvidenceRef rows are required for claim material replay",
+                sequence=proposed_entries[0].sequence,
+            )
+        else:
+            _validate_claim_material(
+                claim,
+                proposed_entries[0],
+                ledger_entries,
+                supplied_evidence,
+                issues,
             )
 
     decision_entries = [
@@ -259,6 +510,14 @@ def replay_claim_authority(
                 issues,
                 "DECISION_LEDGER_PAYLOAD_MISMATCH",
                 "governance decision and ledger payload differ",
+                decision_id=decision.decision_id,
+                sequence=matches[0].sequence,
+            )
+        if len(matches) == 1 and matches[0].created_at != decision.decided_at:
+            _issue(
+                issues,
+                "DECISION_LEDGER_TIMESTAMP_MISMATCH",
+                "governance decision timestamp differs from its ledger entry",
                 decision_id=decision.decision_id,
                 sequence=matches[0].sequence,
             )
@@ -358,7 +617,7 @@ def replay_claim_authority(
             "claim authority ledger names an evidence ID more than once",
         )
     if evidence_ids is not None:
-        supplied_evidence = list(evidence_ids)
+        assert supplied_evidence is not None
         evidence_by_id = {
             item.evidence_id: item
             for item in supplied_evidence
@@ -413,6 +672,36 @@ def replay_claim_authority(
                     evidence_id=evidence_id,
                     sequence=entry.sequence,
                 )
+
+    # ``updated_at`` is another governance cache.  Use ledger sequence, not
+    # lexical timestamp order, so clock rollback does not select an older
+    # decision merely because its wall-clock value is greater.
+    expected_updated_at = claim.created_at
+    valid_status = GovernanceStatus.PROPOSED
+    for decision in ordered_decisions:
+        matches = ledger_by_decision.get(decision.decision_id, ())
+        decision_is_valid = (
+            decision.claim_id == claim.claim_id
+            and decision.from_status is valid_status
+            and decision.to_status
+            in ALLOWED_GOVERNANCE_TRANSITIONS.get(valid_status, frozenset())
+            and bool(decision.reviewer.strip())
+            and bool(decision.reason.strip())
+            and len(matches) == 1
+            and _decision_payload_matches(decision, matches[0].payload)
+            and matches[0].created_at == decision.decided_at
+        )
+        if decision_is_valid:
+            valid_status = decision.to_status
+            expected_updated_at = decision.decided_at
+    if claim.updated_at != expected_updated_at:
+        _issue(
+            issues,
+            "CLAIM_UPDATED_AT_REPLAY_MISMATCH",
+            "cached claim updated_at differs from the last valid ledger-ordered decision",
+            cached=claim.updated_at,
+            replayed=expected_updated_at,
+        )
 
     if claim.status is not current:
         _issue(

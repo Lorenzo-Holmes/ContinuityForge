@@ -81,7 +81,10 @@ def validate_claim_shape(claim: ClaimProposal) -> None:
     validate_interval(
         claim.knowledge_from, claim.knowledge_to, name="knowledge interval"
     )
-    if not 0.0 <= float(getattr(claim, "confidence", 1.0)) <= 1.0:
+    confidence = getattr(claim, "confidence", 1.0)
+    if isinstance(confidence, bool):
+        raise TypeError("confidence must be a number, not bool")
+    if not 0.0 <= float(confidence) <= 1.0:
         raise ValueError("confidence must be between 0 and 1")
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuityforge"
-version = "0.3.0a3"
+version = "0.3.0a4"
 description = "Compile source texts into provenance-aware, timeline-safe memory packs for long-lived AI personas."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -23,6 +23,16 @@ import unicodedata
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 from uuid import uuid4
 
+from .audit_material import (
+    CLAIM_ATTESTATION_EVENT,
+    CLAIM_CREATION_EVENT,
+    CLAIM_EVIDENCE_EVENT,
+    EVENT_ATTESTATION_EVENT,
+    EVENT_CREATION_EVENT,
+    build_material_attestation_payload,
+    claim_material_digests,
+    event_material_digests,
+)
 from .constants import SCHEMA_VERSION
 from .evidence import validate_line_range_types
 from .exceptions import (
@@ -34,7 +44,14 @@ from .exceptions import (
     ReadOnlyStorageError,
     SchemaError,
 )
-from .migrations import MigrationMode, MigrationReport, preflight_migration
+from .migrations import (
+    LegacyMaterialPlan,
+    MigrationIssue,
+    MigrationMode,
+    MigrationReport,
+    plan_legacy_material_checkpoints,
+    preflight_migration,
+)
 from .ingest import parse_json_content
 from .limits import (
     MAX_CLAIM_METADATA_UTF8_BYTES,
@@ -67,6 +84,15 @@ from .sqlite_safety import SQLiteSidecarError, validate_readonly_sidecars
 GENESIS_HASH = "0" * 64
 MAX_EVENT_DETAILS_DEPTH = 128
 MAX_METADATA_UTF8_BYTES = 4096
+_RESERVED_MATERIAL_EVENT_TYPES = frozenset(
+    {
+        CLAIM_ATTESTATION_EVENT,
+        CLAIM_CREATION_EVENT,
+        CLAIM_EVIDENCE_EVENT,
+        EVENT_ATTESTATION_EVENT,
+        EVENT_CREATION_EVENT,
+    }
+)
 _BIDI_CONTROL_CLASSES = frozenset({"RLE", "LRE", "RLO", "LRO", "PDF", "RLI", "LRI", "FSI", "PDI"})
 
 
@@ -244,12 +270,16 @@ class Storage:
         readonly: bool = False,
         migration_mode: MigrationMode | str = MigrationMode.STRICT,
         create_backup: bool = True,
+        attest_current_legacy_material: bool = False,
     ) -> None:
         self.database = str(database)
         self.timeout = timeout
         self.readonly = bool(readonly)
         self.migration_mode = MigrationMode(migration_mode)
         self.create_backup = bool(create_backup)
+        if type(attest_current_legacy_material) is not bool:
+            raise TypeError("attest_current_legacy_material must be a bool")
+        self.attest_current_legacy_material = attest_current_legacy_material
         self.migration_report: MigrationReport | None = None
         self._quarantined_legacy: set[tuple[str, str]] = set()
         self._connection: sqlite3.Connection | None = None
@@ -378,6 +408,9 @@ class Storage:
                         connection,
                         mode=self.migration_mode,
                         create_backup=False,
+                        attest_current_legacy_material=(
+                            self.attest_current_legacy_material
+                        ),
                     )
                     self.migration_report = report
                     raise MigrationError(
@@ -406,6 +439,9 @@ class Storage:
                     connection,
                     mode=self.migration_mode,
                     create_backup=self.create_backup,
+                    attest_current_legacy_material=(
+                        self.attest_current_legacy_material
+                    ),
                 )
                 self.migration_report = report
                 if not report.is_ready:
@@ -415,7 +451,39 @@ class Storage:
                     )
 
                 self._quarantined_legacy = set(report.quarantined)
-                self._initialize_or_migrate(connection, source.kind)
+                material_plan = plan_legacy_material_checkpoints(
+                    connection,
+                    source.kind,
+                )
+                if (
+                    material_plan.requires_explicit_attestation
+                    and report.backup_path is None
+                ):
+                    report = replace(
+                        report,
+                        status="failed",
+                        issues=report.issues
+                        + (
+                            MigrationIssue(
+                                code="MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP",
+                                message=(
+                                    "legacy material acceptance requires a verified "
+                                    "pre-migration backup"
+                                ),
+                            ),
+                        ),
+                        finished_at=_now(),
+                    )
+                    self.migration_report = report
+                    raise MigrationError(
+                        "legacy material acceptance requires a verified backup",
+                        report=report,
+                    )
+                attestation_counts = self._initialize_or_migrate(
+                    connection,
+                    source.kind,
+                    material_plan=material_plan,
+                )
                 # The target schema and audit chain are part of the migration
                 # transaction's commit gate.  A post-COMMIT validation would
                 # report failure after making the destructive phase durable.
@@ -487,6 +555,7 @@ class Storage:
                     ),
                     target=target,
                     migrated_counts=migrated_counts,
+                    attestation_counts=attestation_counts,
                     finished_at=_now(),
                 )
             except BaseException as exc:
@@ -604,8 +673,12 @@ class Storage:
         return int(row[0]) if row else 0
 
     def _initialize_or_migrate(
-        self, connection: sqlite3.Connection, source_kind: SchemaKind
-    ) -> None:
+        self,
+        connection: sqlite3.Connection,
+        source_kind: SchemaKind,
+        *,
+        material_plan: LegacyMaterialPlan,
+    ) -> tuple[tuple[str, int], ...]:
         """Apply one preflight-approved migration edge inside the caller transaction."""
 
         if source_kind is SchemaKind.V02:
@@ -621,6 +694,10 @@ class Storage:
             source_audit_entries = self._backfill_source_audit_ledger(connection)
             self._backfill_claim_authority_ledger(connection)
             self._backfill_event_audit_ledger(connection)
+            checkpoint_counts = self._append_legacy_material_attestations(
+                connection,
+                material_plan,
+            )
             if removed_hash_constraint:
                 self._append_ledger_in_transaction(
                     connection,
@@ -656,7 +733,7 @@ class Storage:
                 },
             )
             self._install_v3_triggers(connection)
-            return
+            return checkpoint_counts
 
         if source_kind is SchemaKind.EMPTY:
             self._create_schema_v2(connection)
@@ -669,25 +746,113 @@ class Storage:
                 aggregate_id=str(SCHEMA_VERSION),
                 payload={"schema_version": SCHEMA_VERSION},
             )
-            return
+            return (("claims", 0), ("events", 0))
 
         if source_kind is SchemaKind.V01:
             tables = self._table_names(connection)
             self._migrate_legacy_v1(connection, tables, 1)
             self._backfill_source_audit_ledger(connection)
             self._install_v3_triggers(connection)
-            return
+            return (("claims", 0), ("events", 0))
 
-        if source_kind is SchemaKind.V03_ALPHA2:
-            # Same-version hardening is deliberately structure-only.  Preflight
-            # requires complete, matching Source audit material; this edge must
-            # neither repair it nor append to/change the existing ledger head.
+        if source_kind in {SchemaKind.V03_ALPHA2, SchemaKind.V03_ALPHA3}:
+            checkpoint_counts = self._append_legacy_material_attestations(
+                connection,
+                material_plan,
+            )
             self._install_v3_triggers(connection)
-            return
+            return checkpoint_counts
 
         raise SchemaError(
             f"migration source is not admitted: {source_kind.value}"
         )
+
+    def _append_legacy_material_attestations(
+        self,
+        connection: sqlite3.Connection,
+        plan: LegacyMaterialPlan,
+    ) -> tuple[tuple[str, int], ...]:
+        """Append one bound v2 checkpoint for each legacy partial creation."""
+
+        for target in plan.claim_attestations:
+            claim_row = connection.execute(
+                "SELECT * FROM claim_proposals WHERE claim_id = ?",
+                (target.aggregate_id,),
+            ).fetchone()
+            if claim_row is None:
+                raise SchemaError("planned Claim material disappeared during migration")
+            evidence_rows = connection.execute(
+                "SELECT * FROM evidence_refs WHERE claim_id = ? "
+                "ORDER BY snapshot_id, start_line, end_line, evidence_id",
+                (target.aggregate_id,),
+            ).fetchall()
+            digests = claim_material_digests(
+                self._row_to_claim(claim_row),
+                [self._row_to_evidence(row) for row in evidence_rows],
+            )
+            payload = build_material_attestation_payload(
+                digests,
+                attested_event_type=CLAIM_CREATION_EVENT,
+                attested_entry_id=target.creation_entry_id,
+                migration_source_kind=plan.source_kind.value,
+            )
+            self._append_ledger_in_transaction(
+                connection,
+                event_type=CLAIM_ATTESTATION_EVENT,
+                aggregate_type="claim",
+                aggregate_id=target.aggregate_id,
+                payload=payload,
+            )
+
+        for target in plan.event_attestations:
+            event_row = connection.execute(
+                "SELECT * FROM narrative_events WHERE event_id = ?",
+                (target.aggregate_id,),
+            ).fetchone()
+            if event_row is None:
+                raise SchemaError(
+                    "planned NarrativeEvent material disappeared during migration"
+                )
+            evidence_rows = connection.execute(
+                "SELECT * FROM event_evidence_refs WHERE event_id = ? "
+                "ORDER BY snapshot_id, start_line, end_line, evidence_id",
+                (target.aggregate_id,),
+            ).fetchall()
+            evidence = [
+                EvidenceRef(
+                    evidence_id=str(row["evidence_id"]),
+                    event_id=target.aggregate_id,
+                    claim_id=None,
+                    snapshot_id=str(row["snapshot_id"]),
+                    start_line=int(row["start_line"]),
+                    end_line=int(row["end_line"]),
+                    start_char=row["start_char"],
+                    end_char=row["end_char"],
+                    quote=row["quote"],
+                    content_hash=row["content_hash"],
+                    created_at=str(row["created_at"]),
+                )
+                for row in evidence_rows
+            ]
+            digests = event_material_digests(
+                self._row_to_event(event_row),
+                evidence,
+            )
+            payload = build_material_attestation_payload(
+                digests,
+                attested_event_type=EVENT_CREATION_EVENT,
+                attested_entry_id=target.creation_entry_id,
+                migration_source_kind=plan.source_kind.value,
+            )
+            self._append_ledger_in_transaction(
+                connection,
+                event_type=EVENT_ATTESTATION_EVENT,
+                aggregate_type="narrative_event",
+                aggregate_id=target.aggregate_id,
+                payload=payload,
+            )
+
+        return plan.checkpoint_counts
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> list[str]:
@@ -1129,6 +1294,106 @@ class Storage:
             DROP TRIGGER IF EXISTS continuityforge_sources_no_delete;
             DROP TRIGGER IF EXISTS continuityforge_claims_input_limits;
             DROP TRIGGER IF EXISTS continuityforge_events_input_limits;
+            DROP TRIGGER IF EXISTS continuityforge_ledger_material_guard;
+
+            CREATE TRIGGER continuityforge_ledger_material_guard
+            BEFORE INSERT ON event_ledger
+            WHEN NEW.event_type IN (
+                'claim.proposed',
+                'claim.evidence_added',
+                'narrative_event.created',
+                'claim.material_attested',
+                'narrative_event.material_attested'
+            )
+            BEGIN
+                SELECT CASE
+                    WHEN NOT (
+                        (NEW.event_type IN (
+                            'claim.proposed',
+                            'claim.evidence_added',
+                            'claim.material_attested'
+                         )
+                         AND NEW.aggregate_type = 'claim')
+                        OR
+                        (NEW.event_type IN (
+                            'narrative_event.created',
+                            'narrative_event.material_attested'
+                         )
+                         AND NEW.aggregate_type = 'narrative_event')
+                    )
+                    THEN RAISE(ABORT, 'ledger material event has invalid aggregate type')
+                END;
+                SELECT CASE
+                    WHEN json_valid(NEW.payload_json) <> 1
+                    THEN RAISE(ABORT, 'ledger material payload must be valid JSON')
+                END;
+                SELECT CASE
+                    WHEN json_type(NEW.payload_json, '$.material_version') IS NOT 'integer'
+                      OR json_extract(NEW.payload_json, '$.material_version') IS NOT 2
+                    THEN RAISE(ABORT, 'ledger material_version must equal integer 2')
+                END;
+                SELECT CASE
+                    WHEN json_type(NEW.payload_json, '$.aggregate_sha256') IS NOT 'text'
+                      OR length(json_extract(NEW.payload_json, '$.aggregate_sha256')) IS NOT 64
+                      OR json_extract(NEW.payload_json, '$.aggregate_sha256')
+                         GLOB '*[^0-9a-f]*'
+                    THEN RAISE(ABORT, 'ledger material aggregate_sha256 is invalid')
+                END;
+                SELECT CASE
+                    WHEN json_type(NEW.payload_json, '$.evidence_set_sha256') IS NOT 'text'
+                      OR length(json_extract(NEW.payload_json, '$.evidence_set_sha256')) IS NOT 64
+                      OR json_extract(NEW.payload_json, '$.evidence_set_sha256')
+                         GLOB '*[^0-9a-f]*'
+                    THEN RAISE(ABORT, 'ledger material evidence_set_sha256 is invalid')
+                END;
+                SELECT CASE
+                    WHEN NEW.event_type IN (
+                        'claim.material_attested',
+                        'narrative_event.material_attested'
+                    ) AND (
+                        (SELECT COUNT(*) FROM json_each(NEW.payload_json)) IS NOT 6
+                        OR EXISTS (
+                            SELECT 1 FROM json_each(NEW.payload_json)
+                            WHERE key NOT IN (
+                                'material_version',
+                                'aggregate_sha256',
+                                'evidence_set_sha256',
+                                'attested_event_type',
+                                'attested_entry_id',
+                                'migration_source_kind'
+                            )
+                        )
+                        OR json_type(
+                            NEW.payload_json, '$.attested_event_type'
+                        ) IS NOT 'text'
+                        OR json_type(
+                            NEW.payload_json, '$.attested_entry_id'
+                        ) IS NOT 'text'
+                        OR length(json_extract(
+                            NEW.payload_json, '$.attested_entry_id'
+                        )) IS 0
+                        OR json_type(
+                            NEW.payload_json, '$.migration_source_kind'
+                        ) IS NOT 'text'
+                        OR json_extract(
+                            NEW.payload_json, '$.migration_source_kind'
+                        ) NOT IN ('v0.2', 'v0.3-alpha2', 'v0.3-alpha3')
+                        OR (
+                            NEW.event_type = 'claim.material_attested'
+                            AND json_extract(
+                                NEW.payload_json, '$.attested_event_type'
+                            ) IS NOT 'claim.proposed'
+                        )
+                        OR (
+                            NEW.event_type = 'narrative_event.material_attested'
+                            AND json_extract(
+                                NEW.payload_json, '$.attested_event_type'
+                            ) IS NOT 'narrative_event.created'
+                        )
+                    )
+                    THEN RAISE(ABORT, 'ledger material attestation payload is invalid')
+                END;
+            END;
 
             CREATE TRIGGER continuityforge_sources_identity_immutable
             BEFORE UPDATE ON sources
@@ -1378,10 +1643,12 @@ class Storage:
             if existing and int(existing[0]):
                 continue
             evidence_rows = connection.execute(
-                "SELECT evidence_id FROM evidence_refs WHERE claim_id = ? "
+                "SELECT * FROM evidence_refs WHERE claim_id = ? "
                 "ORDER BY snapshot_id, start_line, end_line, evidence_id",
                 (claim_id,),
             ).fetchall()
+            evidence = [self._row_to_evidence(row) for row in evidence_rows]
+            material = claim_material_digests(self._row_to_claim(claim), evidence)
             self._append_ledger_in_transaction(
                 connection,
                 event_type="claim.proposed",
@@ -1393,7 +1660,8 @@ class Storage:
                     "text": str(claim["text"]),
                     "access_policy": str(claim["access_policy"]),
                     "confidence": float(claim["confidence"]),
-                    "evidence_ids": [str(row[0]) for row in evidence_rows],
+                    "evidence_ids": [item.evidence_id for item in evidence],
+                    **material.to_payload(),
                 },
                 created_at=str(claim["created_at"]),
             )
@@ -1456,6 +1724,23 @@ class Storage:
                 }
                 for row in evidence_rows
             ]
+            evidence = [
+                EvidenceRef(
+                    evidence_id=str(row["evidence_id"]),
+                    event_id=event_id,
+                    claim_id=None,
+                    snapshot_id=str(row["snapshot_id"]),
+                    start_line=int(row["start_line"]),
+                    end_line=int(row["end_line"]),
+                    start_char=row["start_char"],
+                    end_char=row["end_char"],
+                    quote=row["quote"],
+                    content_hash=row["content_hash"],
+                    created_at=str(row["created_at"]),
+                )
+                for row in evidence_rows
+            ]
+            material = event_material_digests(self._row_to_event(event), evidence)
             self._append_ledger_in_transaction(
                 connection,
                 event_type="narrative_event.created",
@@ -1470,6 +1755,7 @@ class Storage:
                     "access_policy": str(event["access_policy"]),
                     "evidence_ids": [item["evidence_id"] for item in evidence_refs],
                     "evidence_refs": evidence_refs,
+                    **material.to_payload(),
                 },
                 created_at=str(event["created_at"]),
             )
@@ -2209,6 +2495,7 @@ class Storage:
                 persisted = connection.execute(
                     "SELECT * FROM narrative_events WHERE event_id = ?", (event_id,)
                 ).fetchone()
+                material = event_material_digests(self._row_to_event(persisted), ())
                 self._append_ledger_in_transaction(
                     connection,
                     event_type="narrative_event.created",
@@ -2223,6 +2510,7 @@ class Storage:
                         "access_policy": str(persisted["access_policy"]),
                         "evidence_ids": [],
                         "evidence_refs": [],
+                        **material.to_payload(),
                     },
                     created_at=timestamp,
                 )
@@ -2506,9 +2794,13 @@ class Storage:
                 "new claims must start as PROPOSED; use record_governance_decision"
             )
         access_policy = AccessPolicy(proposal.access_policy)
+        if isinstance(proposal.confidence, bool):
+            raise TypeError("confidence must be a number, not bool")
         confidence = float(proposal.confidence)
         if not 0.0 <= confidence <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0")
+        if confidence == 0.0:
+            confidence = 0.0
         validate_interval(proposal.valid_from, proposal.valid_to, name="valid interval")
         validate_interval(
             proposal.knowledge_from, proposal.knowledge_to, name="knowledge interval"
@@ -2590,6 +2882,7 @@ class Storage:
                 self._insert_evidence_ref(connection, claim_id, continuity, item, timestamp)
                 for item in evidence_items
             ]
+            material = claim_material_digests(persisted, stored_evidence)
             self._append_ledger_in_transaction(
                 connection,
                 event_type="claim.proposed",
@@ -2602,6 +2895,7 @@ class Storage:
                     "access_policy": access_policy.value,
                     "confidence": confidence,
                     "evidence_ids": [item.evidence_id for item in stored_evidence],
+                    **material.to_payload(),
                 },
                 created_at=timestamp,
             )
@@ -2613,7 +2907,7 @@ class Storage:
         timestamp = _now()
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT continuity, status FROM claim_proposals WHERE claim_id = ?", (claim_id,)
+                "SELECT * FROM claim_proposals WHERE claim_id = ?", (claim_id,)
             ).fetchone()
             if row is None:
                 raise NotFoundError(f"claim not found: {claim_id}")
@@ -2628,6 +2922,15 @@ class Storage:
             stored = self._insert_evidence_ref(
                 connection, claim_id, str(row["continuity"]), evidence, timestamp
             )
+            evidence_rows = connection.execute(
+                "SELECT * FROM evidence_refs WHERE claim_id = ? "
+                "ORDER BY snapshot_id, start_line, end_line, evidence_id",
+                (claim_id,),
+            ).fetchall()
+            material = claim_material_digests(
+                self._row_to_claim(row),
+                [self._row_to_evidence(item) for item in evidence_rows],
+            )
             self._append_ledger_in_transaction(
                 connection,
                 event_type="claim.evidence_added",
@@ -2638,6 +2941,7 @@ class Storage:
                     "snapshot_id": stored.snapshot_id,
                     "start_line": stored.start_line,
                     "end_line": stored.end_line,
+                    **material.to_payload(),
                 },
                 created_at=timestamp,
             )
@@ -3064,6 +3368,7 @@ class Storage:
                 )
                 for item in evidence_items
             ]
+            material = event_material_digests(persisted, stored_evidence)
             self._append_ledger_in_transaction(
                 connection,
                 event_type="narrative_event.created",
@@ -3087,6 +3392,7 @@ class Storage:
                         }
                         for item in stored_evidence
                     ],
+                    **material.to_payload(),
                 },
                 created_at=timestamp,
             )
@@ -3334,6 +3640,11 @@ class Storage:
     ) -> LedgerEntry:
         """Append a custom domain event without exposing mutable ledger SQL."""
 
+        event_type = _nonempty(event_type, name="event_type")
+        if event_type in _RESERVED_MATERIAL_EVENT_TYPES:
+            raise ValueError(
+                "reserved audit events can be appended only by trusted storage operations"
+            )
         with self.transaction() as connection:
             return self._append_ledger_in_transaction(
                 connection,

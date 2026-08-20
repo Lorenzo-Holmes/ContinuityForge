@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from continuityforge.audit_material import claim_material_digests
 from continuityforge.governance_integrity import replay_claim_authority
 from continuityforge.models import (
     ClaimProposal,
@@ -11,12 +12,30 @@ from continuityforge.models import (
 
 
 def _claim(status: GovernanceStatus = GovernanceStatus.AUTHORIZED) -> ClaimProposal:
+    updated_at = (
+        "2026-01-01T00:00:00Z"
+        if status is not GovernanceStatus.PROPOSED
+        else "2025-12-31T00:00:00Z"
+    )
     return ClaimProposal(
         claim_id="clm_1",
         persona_id="mira",
         continuity="alpha",
         text="Supported.",
         status=status,
+        created_at="2025-12-31T00:00:00Z",
+        updated_at=updated_at,
+    )
+
+
+def _evidence(evidence_id: str) -> EvidenceRef:
+    return EvidenceRef(
+        evidence_id=evidence_id,
+        claim_id="clm_1",
+        snapshot_id="snp_1",
+        start_line=1,
+        end_line=1,
+        created_at="2025-12-31T00:00:00Z",
     )
 
 
@@ -76,15 +95,29 @@ def _decision_entry(sequence: int, decision: GovernanceDecision) -> LedgerEntry:
     )
 
 
+def _proposal_entry(claim: ClaimProposal, evidence: list[EvidenceRef]) -> LedgerEntry:
+    return _entry(
+        1,
+        "claim.proposed",
+        {
+            "evidence_ids": [item.evidence_id for item in evidence],
+            **claim_material_digests(claim, evidence).to_payload(),
+        },
+    )
+
+
 def test_replay_accepts_exact_decision_ledger_correspondence():
     decision = _decision()
+    claim = _claim()
+    evidence = [_evidence("evr_1")]
     report = replay_claim_authority(
-        _claim(),
+        claim,
         [decision],
         [
-            _entry(1, "claim.proposed", {"evidence_ids": ["evr_1"]}),
+            _proposal_entry(claim, evidence),
             _decision_entry(2, decision),
         ],
+        evidence,
     )
     assert report.is_authorized
     assert report.issues == ()
@@ -114,15 +147,30 @@ def test_replay_allows_evidence_after_explicit_dispute():
         from_status=GovernanceStatus.AUTHORIZED,
         to_status=GovernanceStatus.DISPUTED,
     )
+    claim = _claim(GovernanceStatus.DISPUTED)
+    claim.updated_at = dispute.decided_at
+    evidence = [_evidence("evr_1"), _evidence("evr_2")]
+    checkpoint = claim_material_digests(claim, evidence).to_payload()
     report = replay_claim_authority(
-        _claim(GovernanceStatus.DISPUTED),
+        claim,
         [authorize, dispute],
         [
-            _entry(1, "claim.proposed", {"evidence_ids": ["evr_1"]}),
+            _proposal_entry(claim, evidence[:1]),
             _decision_entry(2, authorize),
             _decision_entry(3, dispute),
-            _entry(4, "claim.evidence_added", {"evidence_id": "evr_2"}),
+            _entry(
+                4,
+                "claim.evidence_added",
+                {
+                    "evidence_id": "evr_2",
+                    "snapshot_id": "snp_1",
+                    "start_line": 1,
+                    "end_line": 1,
+                    **checkpoint,
+                },
+            ),
         ],
+        evidence,
     )
     assert report.is_valid
     assert report.replayed_status is GovernanceStatus.DISPUTED

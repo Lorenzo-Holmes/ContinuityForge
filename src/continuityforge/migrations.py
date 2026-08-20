@@ -23,6 +23,18 @@ import tempfile
 import unicodedata
 from typing import Any, Iterable, Mapping
 
+from .audit_material import (
+    CLAIM_ATTESTATION_EVENT,
+    CLAIM_CREATION_EVENT,
+    CLAIM_EVIDENCE_EVENT,
+    EVENT_ATTESTATION_EVENT,
+    EVENT_CREATION_EVENT,
+    MATERIAL_VERSION,
+    AuditMaterialDigests,
+    claim_material_digests,
+    event_material_digests,
+    parse_material_digests,
+)
 from .constants import MIGRATION_REPORT_SCHEMA, SCHEMA_VERSION
 from .evidence import quote_sha256
 from .exceptions import MigrationError
@@ -35,7 +47,14 @@ from .limits import (
     MAX_EVENT_SUMMARY_UTF8_BYTES,
     MAX_EVENT_TITLE_UTF8_BYTES,
 )
-from .models import LedgerEntry, Source
+from .models import (
+    AccessPolicy,
+    ClaimProposal,
+    EvidenceRef,
+    LedgerEntry,
+    NarrativeEvent,
+    Source,
+)
 from .schema import (
     ALLOWED_MIGRATIONS,
     SchemaFingerprint,
@@ -117,6 +136,8 @@ class MigrationReport:
     started_at: str | None = None
     finished_at: str | None = None
     migrated_counts: tuple[tuple[str, int], ...] = ()
+    attestation_material_version: int | None = None
+    attestation_counts: tuple[tuple[str, int], ...] = ()
     quarantined: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -163,6 +184,11 @@ class MigrationReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "migrated_counts": dict(self.migrated_counts),
+            "attestations": {
+                "material_version": self.attestation_material_version,
+                "claims": dict(self.attestation_counts).get("claims", 0),
+                "events": dict(self.attestation_counts).get("events", 0),
+            },
             "quarantine": {
                 "count": len(self.quarantined),
                 "records": [
@@ -178,6 +204,49 @@ class MigrationReport:
     def to_json(self, *, indent: int | None = None) -> str:
         return json.dumps(
             self.to_dict(), ensure_ascii=False, sort_keys=True, indent=indent
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialAttestationTarget:
+    """One legacy creation entry that needs a v2 material checkpoint."""
+
+    aggregate_id: str
+    creation_entry_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyMaterialPlan:
+    """Write-free plan for establishing v2 material checkpoints."""
+
+    source_kind: SchemaKind
+    claim_backfills: tuple[str, ...] = ()
+    event_backfills: tuple[str, ...] = ()
+    claim_attestations: tuple[MaterialAttestationTarget, ...] = ()
+    event_attestations: tuple[MaterialAttestationTarget, ...] = ()
+    issues: tuple[MigrationIssue, ...] = ()
+    requires_explicit_attestation: bool = False
+
+    @property
+    def checkpoint_counts(self) -> tuple[tuple[str, int], ...]:
+        return (
+            ("claims", len(self.claim_attestations)),
+            ("events", len(self.event_attestations)),
+        )
+
+    @property
+    def acceptance_counts(self) -> tuple[tuple[str, int], ...]:
+        """Rows whose current legacy material needs operator acceptance."""
+
+        return (
+            (
+                "claims",
+                len(self.claim_backfills) + len(self.claim_attestations),
+            ),
+            (
+                "events",
+                len(self.event_backfills) + len(self.event_attestations),
+            ),
         )
 
 
@@ -454,6 +523,577 @@ def _check_interval(
 def _rows(connection: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
     escaped = '"' + table.replace('"', '""') + '"'
     return [dict(row) for row in connection.execute(f"SELECT * FROM {escaped}")]
+
+
+def _claim_material_model(row: Mapping[str, Any]) -> ClaimProposal:
+    return ClaimProposal(
+        claim_id=str(row["claim_id"]),
+        persona_id=str(row["persona_id"]),
+        continuity=str(row["continuity"]),
+        text=str(row["text"]),
+        subject=row.get("subject"),
+        predicate=row.get("predicate"),
+        object_value=row.get("object_value"),
+        valid_from=row.get("valid_from"),
+        valid_to=row.get("valid_to"),
+        knowledge_from=row.get("knowledge_from"),
+        knowledge_to=row.get("knowledge_to"),
+        access_policy=AccessPolicy(str(row["access_policy"])),
+        confidence=float(row["confidence"]),
+        proposed_by=row.get("proposed_by"),
+        proposal_model=row.get("proposal_model"),
+        rationale=row.get("rationale"),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _event_material_model(row: Mapping[str, Any]) -> NarrativeEvent:
+    details = json.loads(str(row["details_json"]))
+    if not isinstance(details, Mapping):
+        raise ValueError("NarrativeEvent details_json must decode to an object")
+    return NarrativeEvent(
+        event_id=str(row["event_id"]),
+        persona_id=str(row["persona_id"]),
+        continuity=str(row["continuity"]),
+        event_type=str(row["event_type"]),
+        title=str(row["title"]),
+        summary=str(row["summary"]),
+        details=dict(details),
+        valid_from=row.get("valid_from"),
+        valid_to=row.get("valid_to"),
+        knowledge_from=row.get("knowledge_from"),
+        knowledge_to=row.get("knowledge_to"),
+        access_policy=AccessPolicy(str(row["access_policy"])),
+        created_at=str(row["created_at"]),
+    )
+
+
+def _evidence_material_model(
+    row: Mapping[str, Any], *, aggregate_type: str
+) -> EvidenceRef:
+    return EvidenceRef(
+        evidence_id=str(row["evidence_id"]),
+        claim_id=(str(row["claim_id"]) if aggregate_type == "claim" else None),
+        event_id=(
+            str(row["event_id"])
+            if aggregate_type == "narrative_event"
+            else None
+        ),
+        snapshot_id=str(row["snapshot_id"]),
+        start_line=int(row["start_line"]),
+        end_line=int(row["end_line"]),
+        start_char=row.get("start_char"),
+        end_char=row.get("end_char"),
+        quote=row.get("quote"),
+        content_hash=row.get("content_hash"),
+        created_at=str(row["created_at"]),
+    )
+
+
+def _material_issue(
+    issues: list[MigrationIssue],
+    code: str,
+    message: str,
+    *,
+    aggregate_type: str,
+    aggregate_id: str,
+    actual: object = None,
+) -> None:
+    _issue(
+        issues,
+        code,
+        message,
+        table="event_ledger",
+        record_id=aggregate_id,
+        field="payload_json",
+        actual=actual,
+    )
+
+
+def _parse_ledger_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = json.loads(str(row.get("payload_json")))
+    if not isinstance(payload, Mapping):
+        raise ValueError("ledger payload must be a JSON object")
+    return payload
+
+
+def _check_material_entry(
+    *,
+    aggregate_type: str,
+    aggregate_id: str,
+    creation_event_type: str,
+    creation_rows: list[dict[str, Any]],
+    attestation_rows: list[dict[str, Any]],
+    creation_digests: AuditMaterialDigests | None,
+    attestation_digests: AuditMaterialDigests,
+    source_kind: SchemaKind,
+    allow_backfill: bool,
+    issues: list[MigrationIssue],
+) -> tuple[str, MaterialAttestationTarget | None]:
+    """Return ``backfill``, ``attest``, or ``existing`` for one aggregate."""
+
+    if len(creation_rows) != 1:
+        if not creation_rows and allow_backfill and not attestation_rows:
+            return "backfill", None
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_CREATION_CORRESPONDENCE_INVALID",
+            "material migration requires exactly one creation ledger entry",
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            actual={
+                "creation_entries": len(creation_rows),
+                "attestation_entries": len(attestation_rows),
+            },
+        )
+        return "invalid", None
+
+    creation = creation_rows[0]
+    try:
+        creation_payload = _parse_ledger_payload(creation)
+        stored_creation_digests = parse_material_digests(creation_payload)
+    except (
+        TypeError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+        UnicodeError,
+    ) as exc:
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_PAYLOAD_INVALID",
+            "creation ledger material fields are malformed",
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            actual={"error_type": type(exc).__name__},
+        )
+        return "invalid", None
+
+    if len(attestation_rows) > 1:
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_ATTESTATION_CORRESPONDENCE_INVALID",
+            "a legacy creation entry may have at most one material attestation",
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            actual=len(attestation_rows),
+        )
+        return "invalid", None
+
+    if stored_creation_digests is not None:
+        if attestation_rows:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_ATTESTATION_REDUNDANT",
+                "a v2 creation entry must not also have a material attestation",
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+            )
+            return "invalid", None
+        if creation_digests is None or stored_creation_digests != creation_digests:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_DIGEST_MISMATCH",
+                "creation ledger material digest differs from persisted material",
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+            )
+            return "invalid", None
+        return "v2", None
+
+    if attestation_rows:
+        # Alpha2/alpha3/v0.2 did not have a protected, explicit migration
+        # attestation operation.  Accepting a pre-existing lookalike would let
+        # the database being migrated decide that the current operator had
+        # consented.  The sole admitted attestation is appended by this
+        # migration invocation after its explicit opt-in and verified backup.
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_ATTESTATION_PREEXISTING",
+            "legacy schemas must not contain pre-existing material attestations",
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            actual=len(attestation_rows),
+        )
+        return "invalid", None
+
+    return (
+        "attest",
+        MaterialAttestationTarget(
+            aggregate_id=aggregate_id,
+            creation_entry_id=str(creation["entry_id"]),
+        ),
+    )
+
+
+def _validate_claim_evidence_material_checkpoints(
+    *,
+    claim_id: str,
+    claim: ClaimProposal,
+    creation_payload: Mapping[str, Any],
+    current_evidence: list[EvidenceRef],
+    ledger: list[dict[str, Any]],
+    issues: list[MigrationIssue],
+    require_material: bool = True,
+) -> None:
+    """Validate cumulative Evidence checkpoints before backup.
+
+    A v2 creation requires material digests on every subsequent
+    ``claim.evidence_added`` entry.  A legacy creation may omit those fields,
+    but once any material field is present the complete checkpoint must be
+    valid; partial or forged hybrid streams therefore fail closed.
+    """
+
+    evidence_by_id = {str(item.evidence_id): item for item in current_evidence}
+    initial_ids = creation_payload.get("evidence_ids")
+    if not isinstance(initial_ids, list) or any(
+        not isinstance(item, str) or not item for item in initial_ids
+    ):
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_EVIDENCE_SET_INVALID",
+            "v2 claim creation must identify its initial Evidence set",
+            aggregate_type="claim",
+            aggregate_id=claim_id,
+        )
+        return
+    if len(set(initial_ids)) != len(initial_ids) or any(
+        item not in evidence_by_id for item in initial_ids
+    ):
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_EVIDENCE_SET_INVALID",
+            "v2 claim creation names duplicate or unknown Evidence rows",
+            aggregate_type="claim",
+            aggregate_id=claim_id,
+        )
+        return
+
+    audited_ids = list(initial_ids)
+    added_entries = [
+        entry
+        for entry in ledger
+        if entry.get("event_type") == CLAIM_EVIDENCE_EVENT
+        and entry.get("aggregate_type") == "claim"
+        and entry.get("aggregate_id") == claim_id
+    ]
+    try:
+        added_entries.sort(key=lambda entry: int(entry["sequence"]))
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_EVIDENCE_CHECKPOINT_INVALID",
+            "Evidence checkpoint ordering is malformed",
+            aggregate_type="claim",
+            aggregate_id=claim_id,
+            actual={"error_type": type(exc).__name__},
+        )
+        return
+
+    for entry in added_entries:
+        try:
+            payload = _parse_ledger_payload(entry)
+            evidence_id = payload.get("evidence_id")
+            if (
+                not isinstance(evidence_id, str)
+                or evidence_id not in evidence_by_id
+                or evidence_id in audited_ids
+            ):
+                raise ValueError("Evidence checkpoint names a duplicate or unknown row")
+            audited_ids.append(evidence_id)
+            stored = parse_material_digests(payload)
+            if stored is None and require_material:
+                raise ValueError("Evidence checkpoint omits v2 material digests")
+            if stored is not None:
+                expected = claim_material_digests(
+                    claim,
+                    [evidence_by_id[item] for item in audited_ids],
+                )
+                if stored != expected:
+                    raise ValueError("Evidence checkpoint digest mismatch")
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            OverflowError,
+            RecursionError,
+            UnicodeError,
+        ) as exc:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_EVIDENCE_CHECKPOINT_INVALID",
+                "claim.evidence_added material checkpoint is invalid",
+                aggregate_type="claim",
+                aggregate_id=claim_id,
+                actual={"error_type": type(exc).__name__},
+            )
+
+    if set(audited_ids) != set(evidence_by_id):
+        _material_issue(
+            issues,
+            "MIGRATION_MATERIAL_EVIDENCE_SET_MISMATCH",
+            "the final v2 Evidence checkpoint differs from stored Evidence rows",
+            aggregate_type="claim",
+            aggregate_id=claim_id,
+            actual={
+                "audited": len(set(audited_ids)),
+                "stored": len(evidence_by_id),
+            },
+        )
+
+
+def plan_legacy_material_checkpoints(
+    connection: sqlite3.Connection,
+    kind: SchemaKind,
+) -> LegacyMaterialPlan:
+    """Inspect legacy material binding without writing SQLite.
+
+    v0.1 has no EventLedger and creates v2 checkpoints while converting rows.
+    v0.2 may backfill an all-empty legacy stream.  Alpha2/alpha3 must already
+    have exactly one creation entry and can only add a bound attestation when
+    that historical payload predates material v2.
+    """
+
+    if kind is SchemaKind.V01:
+        return LegacyMaterialPlan(
+            source_kind=kind,
+            claim_backfills=tuple(
+                sorted(str(row.get("id")) for row in _rows(connection, "claims"))
+            ),
+            event_backfills=tuple(
+                sorted(
+                    str(row.get("id"))
+                    for table in ("narrative_events", "events")
+                    if table in {
+                        str(item[0])
+                        for item in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'table'"
+                        ).fetchall()
+                    }
+                    for row in _rows(connection, table)
+                )
+            ),
+        )
+
+    if kind not in {
+        SchemaKind.V02,
+        SchemaKind.V03_ALPHA2,
+        SchemaKind.V03_ALPHA3,
+    }:
+        return LegacyMaterialPlan(source_kind=kind)
+
+    issues: list[MigrationIssue] = []
+    table_names = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    ledger = _rows(connection, "event_ledger")
+    claim_rows = {str(row["claim_id"]): row for row in _rows(connection, "claim_proposals")}
+    event_rows = {str(row["event_id"]): row for row in _rows(connection, "narrative_events")}
+    claim_evidence_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in _rows(connection, "evidence_refs"):
+        claim_evidence_rows.setdefault(str(row["claim_id"]), []).append(row)
+    event_evidence_rows: dict[str, list[dict[str, Any]]] = {}
+    if "event_evidence_refs" in table_names:
+        for row in _rows(connection, "event_evidence_refs"):
+            event_evidence_rows.setdefault(str(row["event_id"]), []).append(row)
+
+    material_event_scopes = {
+        CLAIM_CREATION_EVENT: ("claim", set(claim_rows)),
+        CLAIM_EVIDENCE_EVENT: ("claim", set(claim_rows)),
+        CLAIM_ATTESTATION_EVENT: ("claim", set(claim_rows)),
+        EVENT_CREATION_EVENT: ("narrative_event", set(event_rows)),
+        EVENT_ATTESTATION_EVENT: ("narrative_event", set(event_rows)),
+    }
+    for entry in ledger:
+        expected = material_event_scopes.get(str(entry.get("event_type")))
+        if expected is None:
+            continue
+        expected_type, known_ids = expected
+        aggregate_id = str(entry.get("aggregate_id"))
+        if entry.get("aggregate_type") != expected_type or aggregate_id not in known_ids:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_EVENT_SCOPE_INVALID",
+                "material ledger event has the wrong aggregate scope",
+                aggregate_type=expected_type,
+                aggregate_id=aggregate_id,
+                actual={
+                    "event_type": entry.get("event_type"),
+                    "aggregate_type": entry.get("aggregate_type"),
+                },
+            )
+
+    claim_backfills: list[str] = []
+    event_backfills: list[str] = []
+    claim_attestations: list[MaterialAttestationTarget] = []
+    event_attestations: list[MaterialAttestationTarget] = []
+    allow_backfill = kind is SchemaKind.V02
+
+    for claim_id, row in sorted(claim_rows.items()):
+        creations = [
+            item
+            for item in ledger
+            if item.get("event_type") == CLAIM_CREATION_EVENT
+            and item.get("aggregate_type") == "claim"
+            and item.get("aggregate_id") == claim_id
+        ]
+        attestations = [
+            item
+            for item in ledger
+            if item.get("event_type") == CLAIM_ATTESTATION_EVENT
+            and item.get("aggregate_type") == "claim"
+            and item.get("aggregate_id") == claim_id
+        ]
+        creation_payload: Mapping[str, Any] = {}
+        try:
+            claim = _claim_material_model(row)
+            current_evidence = [
+                _evidence_material_model(item, aggregate_type="claim")
+                for item in claim_evidence_rows.get(claim_id, [])
+            ]
+            attestation_digests = claim_material_digests(claim, current_evidence)
+            creation_digests: AuditMaterialDigests | None = None
+            if len(creations) == 1:
+                creation_payload = _parse_ledger_payload(creations[0])
+                evidence_ids = creation_payload.get("evidence_ids")
+                if isinstance(evidence_ids, list) and all(
+                    isinstance(item, str) for item in evidence_ids
+                ):
+                    evidence_by_id = {
+                        str(item.evidence_id): item for item in current_evidence
+                    }
+                    if all(item in evidence_by_id for item in evidence_ids):
+                        creation_digests = claim_material_digests(
+                            claim,
+                            [evidence_by_id[item] for item in evidence_ids],
+                        )
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            OverflowError,
+            RecursionError,
+            UnicodeError,
+        ) as exc:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_COMPUTATION_INVALID",
+                "claim material cannot be canonically hashed",
+                aggregate_type="claim",
+                aggregate_id=claim_id,
+                actual={"error_type": type(exc).__name__},
+            )
+            continue
+        action, target = _check_material_entry(
+            aggregate_type="claim",
+            aggregate_id=claim_id,
+            creation_event_type=CLAIM_CREATION_EVENT,
+            creation_rows=creations,
+            attestation_rows=attestations,
+            creation_digests=creation_digests,
+            attestation_digests=attestation_digests,
+            source_kind=kind,
+            allow_backfill=allow_backfill,
+            issues=issues,
+        )
+        if action == "backfill":
+            claim_backfills.append(claim_id)
+        elif action == "attest" and target is not None:
+            claim_attestations.append(target)
+            _validate_claim_evidence_material_checkpoints(
+                claim_id=claim_id,
+                claim=claim,
+                creation_payload=creation_payload,
+                current_evidence=current_evidence,
+                ledger=ledger,
+                issues=issues,
+                require_material=False,
+            )
+        elif action == "v2":
+            _validate_claim_evidence_material_checkpoints(
+                claim_id=claim_id,
+                claim=claim,
+                creation_payload=creation_payload,
+                current_evidence=current_evidence,
+                ledger=ledger,
+                issues=issues,
+            )
+
+    for event_id, row in sorted(event_rows.items()):
+        creations = [
+            item
+            for item in ledger
+            if item.get("event_type") == EVENT_CREATION_EVENT
+            and item.get("aggregate_type") == "narrative_event"
+            and item.get("aggregate_id") == event_id
+        ]
+        attestations = [
+            item
+            for item in ledger
+            if item.get("event_type") == EVENT_ATTESTATION_EVENT
+            and item.get("aggregate_type") == "narrative_event"
+            and item.get("aggregate_id") == event_id
+        ]
+        try:
+            event = _event_material_model(row)
+            evidence = [
+                _evidence_material_model(item, aggregate_type="narrative_event")
+                for item in event_evidence_rows.get(event_id, [])
+            ]
+            digests = event_material_digests(event, evidence)
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            OverflowError,
+            RecursionError,
+            UnicodeError,
+        ) as exc:
+            _material_issue(
+                issues,
+                "MIGRATION_MATERIAL_COMPUTATION_INVALID",
+                "NarrativeEvent material cannot be canonically hashed",
+                aggregate_type="narrative_event",
+                aggregate_id=event_id,
+                actual={"error_type": type(exc).__name__},
+            )
+            continue
+        action, target = _check_material_entry(
+            aggregate_type="narrative_event",
+            aggregate_id=event_id,
+            creation_event_type=EVENT_CREATION_EVENT,
+            creation_rows=creations,
+            attestation_rows=attestations,
+            creation_digests=digests,
+            attestation_digests=digests,
+            source_kind=kind,
+            allow_backfill=allow_backfill,
+            issues=issues,
+        )
+        if action == "backfill":
+            event_backfills.append(event_id)
+        elif action == "attest" and target is not None:
+            event_attestations.append(target)
+
+    requires_explicit = bool(
+        claim_backfills
+        or event_backfills
+        or claim_attestations
+        or event_attestations
+    )
+    return LegacyMaterialPlan(
+        source_kind=kind,
+        claim_backfills=tuple(claim_backfills),
+        event_backfills=tuple(event_backfills),
+        claim_attestations=tuple(claim_attestations),
+        event_attestations=tuple(event_attestations),
+        issues=tuple(issues),
+        requires_explicit_attestation=requires_explicit,
+    )
 
 
 def _required_id(
@@ -1434,6 +2074,14 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
         expected_previous = str(row["entry_hash"])
         expected_sequence += 1
 
+    issues.extend(
+        _validate_v02_source_audit_backfill_eligibility(
+            sources=sources,
+            snapshots=snapshots,
+            ledger=ledger,
+        )
+    )
+
     for claim_id in claims:
         claim_stream = [
             row
@@ -1447,6 +2095,15 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
             if row.get("event_type")
             in {"claim.proposed", "claim.governance_decided"}
         ]
+        stored_ids = stored_evidence_by_claim.get(claim_id, [])
+        if claims[claim_id].get("status") == "AUTHORIZED" and not stored_ids:
+            _issue(
+                issues,
+                "MIGRATION_EVIDENCE_REQUIRED",
+                "every authorized claim must retain at least one valid evidence row",
+                table="claim_proposals",
+                record_id=claim_id,
+            )
         if not entries:
             if claim_stream:
                 _issue(
@@ -1455,6 +2112,22 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
                     "claim has a non-empty ledger stream but no complete authority history",
                     table="event_ledger",
                     record_id=claim_id,
+                )
+            expected_updated_at = claims[claim_id].get("created_at")
+            for decision in by_claim.get(claim_id, []):
+                expected_updated_at = decision.get("decided_at")
+            if claims[claim_id].get("updated_at") != expected_updated_at:
+                _issue(
+                    issues,
+                    "MIGRATION_CLAIM_UPDATED_AT_REPLAY_MISMATCH",
+                    "claim updated_at differs from its legacy decision order",
+                    table="claim_proposals",
+                    record_id=claim_id,
+                    field="updated_at",
+                    actual={
+                        "cached": claims[claim_id].get("updated_at"),
+                        "replayed": expected_updated_at,
+                    },
                 )
             continue
         proposals = [row for row in entries if row.get("event_type") == "claim.proposed"]
@@ -1516,6 +2189,7 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
 
         known_decision_ids = {str(row.get("decision_id")) for row in decision_rows}
         matched_sequences: list[int] = []
+        matched_decision_times: list[tuple[int, object]] = []
         for decision in decision_rows:
             decision_id = str(decision.get("decision_id"))
             matches = ledger_by_decision.get(decision_id, [])
@@ -1545,7 +2219,21 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
                     table="event_ledger",
                     record_id=entry.get("entry_id"),
                 )
-            matched_sequences.append(int(entry["sequence"]))
+            sequence = int(entry["sequence"])
+            if entry.get("created_at") != decision.get("decided_at"):
+                _issue(
+                    issues,
+                    "MIGRATION_AUTHORITY_LEDGER_TIMESTAMP_MISMATCH",
+                    "decision timestamp differs from its governance ledger entry",
+                    table="event_ledger",
+                    record_id=entry.get("entry_id"),
+                    actual={
+                        "decision": decision.get("decided_at"),
+                        "ledger": entry.get("created_at"),
+                    },
+                )
+            matched_sequences.append(sequence)
+            matched_decision_times.append((sequence, decision.get("decided_at")))
 
         if matched_sequences != sorted(matched_sequences):
             _issue(
@@ -1554,6 +2242,23 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
                 "decision row order and governance ledger order differ",
                 table="event_ledger",
                 record_id=claim_id,
+            )
+
+        expected_updated_at = claims[claim_id].get("created_at")
+        for _, decided_at in sorted(matched_decision_times):
+            expected_updated_at = decided_at
+        if claims[claim_id].get("updated_at") != expected_updated_at:
+            _issue(
+                issues,
+                "MIGRATION_CLAIM_UPDATED_AT_REPLAY_MISMATCH",
+                "claim updated_at differs from the last ledger-ordered decision",
+                table="claim_proposals",
+                record_id=claim_id,
+                field="updated_at",
+                actual={
+                    "cached": claims[claim_id].get("updated_at"),
+                    "replayed": expected_updated_at,
+                },
             )
 
         for decision_id, matches in ledger_by_decision.items():
@@ -1690,15 +2395,6 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
                         actual=replayed_status,
                     )
 
-        stored_ids = stored_evidence_by_claim.get(claim_id, [])
-        if claims[claim_id].get("status") == "AUTHORIZED" and not stored_ids:
-            _issue(
-                issues,
-                "MIGRATION_EVIDENCE_REQUIRED",
-                "every authorized claim must retain at least one valid evidence row",
-                table="claim_proposals",
-                record_id=claim_id,
-            )
         if (
             len(set(audited_evidence_ids)) != len(audited_evidence_ids)
             or len(set(stored_ids)) != len(stored_ids)
@@ -1862,6 +2558,15 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
         event_evidence_by_event.setdefault(event_id, {})[evidence_id] = row
 
     for event_id, event in events_by_id.items():
+        actual_evidence = event_evidence_by_event.get(event_id, {})
+        if not actual_evidence:
+            _issue(
+                issues,
+                "MIGRATION_EVENT_EVIDENCE_REQUIRED",
+                "every materialized event must retain at least one valid evidence row",
+                table="narrative_events",
+                record_id=event_id,
+            )
         stream = [
             row for row in ledger
             if row.get("aggregate_type") == "narrative_event"
@@ -1897,28 +2602,36 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
             "knowledge_from": event.get("knowledge_from"),
             "access_policy": event.get("access_policy"),
         }
-        actual_evidence = event_evidence_by_event.get(event_id, {})
-        if not actual_evidence:
-            _issue(
-                issues,
-                "MIGRATION_EVENT_EVIDENCE_REQUIRED",
-                "every materialized event must retain at least one valid evidence row",
-                table="narrative_events",
-                record_id=event_id,
-            )
         expected_ids = set(actual_evidence)
         payload_ids = payload.get("evidence_ids") if isinstance(payload, Mapping) else None
         payload_refs = payload.get("evidence_refs") if isinstance(payload, Mapping) else None
-        refs_by_id = {
-            item.get("evidence_id"): item
+        valid_payload_ids = isinstance(payload_ids, list) and all(
+            isinstance(item, str) and item for item in payload_ids
+        )
+        valid_payload_refs = isinstance(payload_refs, list) and all(
+            isinstance(item, Mapping)
+            and isinstance(item.get("evidence_id"), str)
+            and bool(item.get("evidence_id"))
             for item in payload_refs
-            if isinstance(item, Mapping) and isinstance(item.get("evidence_id"), str)
-        } if isinstance(payload_refs, list) else {}
+        )
+        ref_ids = (
+            [str(item["evidence_id"]) for item in payload_refs]
+            if valid_payload_refs
+            else []
+        )
+        refs_by_id = (
+            {str(item["evidence_id"]): item for item in payload_refs}
+            if valid_payload_refs
+            else {}
+        )
         mismatch = (
             not isinstance(payload, Mapping)
             or any(payload.get(key) != value for key, value in expected_core.items())
-            or not isinstance(payload_ids, list)
+            or not valid_payload_ids
+            or not valid_payload_refs
             or len(payload_ids) != len(set(payload_ids))
+            or len(ref_ids) != len(set(ref_ids))
+            or payload_ids != ref_ids
             or set(payload_ids) != expected_ids
             or set(refs_by_id) != expected_ids
         )
@@ -1943,6 +2656,169 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
                 table="event_ledger",
                 record_id=entry.get("entry_id"),
             )
+    return issues
+
+
+def _validate_v02_source_audit_backfill_eligibility(
+    *,
+    sources: Mapping[str, Mapping[str, Any]],
+    snapshots: Mapping[str, Mapping[str, Any]],
+    ledger: list[dict[str, Any]],
+) -> list[MigrationIssue]:
+    """Validate complete Source audit streams or an all-empty backfill shape.
+
+    Historical v0.2 databases may omit Source audit entries entirely.  Those
+    rows can be deterministically backfilled, but a partial stream must be
+    rejected before a backup is published.  Row-derived ``updated_at`` is
+    checked even for the empty-stream shape so postflight cannot discover a
+    mismatch only after migration work has started.
+    """
+
+    issues: list[MigrationIssue] = []
+    try:
+        source_models = [
+            Source(
+                source_id=str(row["source_id"]),
+                source_key=str(row["source_key"]),
+                continuity=str(row["continuity"]),
+                created_at=str(row["created_at"]),
+                updated_at=str(row["updated_at"]),
+            )
+            for row in sources.values()
+        ]
+        snapshot_models = [
+            SourceAuditSnapshot(
+                snapshot_id=str(row["snapshot_id"]),
+                source_id=str(row["source_id"]),
+                version=int(row["version"]),
+                content_hash=str(row["content_hash"]),
+                media_type=str(row["media_type"]),
+                origin_path=row.get("origin_path"),
+                previous_snapshot_id=row.get("previous_snapshot_id"),
+                line_count=int(row["line_count"]),
+                created_at=str(row["created_at"]),
+            )
+            for row in snapshots.values()
+        ]
+        audit_entries: list[LedgerEntry] = []
+        for row in ledger:
+            if row.get("event_type") not in {
+                "source.created",
+                "source_snapshot.created",
+            }:
+                continue
+            payload = json.loads(str(row.get("payload_json")))
+            if not isinstance(payload, Mapping):
+                raise ValueError("Source audit payload is not an object")
+            audit_entries.append(
+                LedgerEntry(
+                    sequence=int(row["sequence"]),
+                    entry_id=str(row["entry_id"]),
+                    event_type=str(row["event_type"]),
+                    aggregate_type=str(row["aggregate_type"]),
+                    aggregate_id=str(row["aggregate_id"]),
+                    payload=payload,
+                    previous_hash=str(row["previous_hash"]),
+                    entry_hash=str(row["entry_hash"]),
+                    created_at=str(row["created_at"]),
+                )
+            )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+        UnicodeError,
+    ) as exc:
+        return [
+            MigrationIssue(
+                "MIGRATION_SOURCE_AUDIT_INVALID",
+                "v0.2 Source audit material is malformed",
+                table="sources",
+                actual={"error_type": type(exc).__name__},
+            )
+        ]
+
+    reports = replay_source_audits(source_models, snapshot_models, audit_entries)
+    snapshots_by_source: dict[str, list[SourceAuditSnapshot]] = {}
+    for snapshot in snapshot_models:
+        snapshots_by_source.setdefault(snapshot.source_id, []).append(snapshot)
+    known_source_ids = {source.source_id for source in source_models}
+
+    for source in source_models:
+        owned = snapshots_by_source.get(source.source_id, [])
+        owned_ids = {snapshot.snapshot_id for snapshot in owned}
+        has_any_stream = any(
+            (
+                entry.event_type == "source.created"
+                and entry.aggregate_id == source.source_id
+            )
+            or (
+                entry.event_type == "source_snapshot.created"
+                and entry.aggregate_id in owned_ids
+            )
+            for entry in audit_entries
+        )
+        if not has_any_stream:
+            if not owned:
+                issues.append(
+                    MigrationIssue(
+                        "MIGRATION_SOURCE_AUDIT_INVALID",
+                        "every committed Source must own at least one SourceSnapshot",
+                        table="sources",
+                        record_id=source.source_id,
+                        actual={"issue_codes": ["SOURCE_SNAPSHOT_REQUIRED"]},
+                    )
+                )
+                continue
+            latest = max(owned, key=lambda item: (item.version, item.snapshot_id))
+            if source.updated_at != latest.created_at:
+                issues.append(
+                    MigrationIssue(
+                        "MIGRATION_SOURCE_AUDIT_INVALID",
+                        "Source updated_at differs from its latest SourceSnapshot",
+                        table="sources",
+                        record_id=source.source_id,
+                        field="updated_at",
+                        actual={
+                            "issue_codes": ["SOURCE_UPDATED_AT_MISMATCH"],
+                            "cached": source.updated_at,
+                            "replayed": latest.created_at,
+                        },
+                    )
+                )
+            continue
+
+        report = reports.get(source.source_id)
+        if report is not None and report.is_valid:
+            continue
+        issues.append(
+            MigrationIssue(
+                "MIGRATION_SOURCE_AUDIT_INVALID",
+                "v0.2 Source audit stream is partial or inconsistent",
+                table="sources",
+                record_id=source.source_id,
+                actual={
+                    "issue_codes": [item.code for item in report.issues]
+                    if report is not None
+                    else ["SOURCE_AUDIT_DATA_UNAVAILABLE"],
+                },
+            )
+        )
+
+    for source_id, report in reports.items():
+        if source_id in known_source_ids or report.is_valid:
+            continue
+        issues.append(
+            MigrationIssue(
+                "MIGRATION_SOURCE_AUDIT_INVALID",
+                "v0.2 Source audit stream contains an orphan entry",
+                table="event_ledger",
+                record_id=source_id,
+                actual={"issue_codes": [item.code for item in report.issues]},
+            )
+        )
     return issues
 
 
@@ -2038,7 +2914,7 @@ def validate_migration_data(
         return tuple(_validate_v01(connection))
     if kind is SchemaKind.V02:
         return tuple(_validate_v02(connection))
-    if kind is SchemaKind.V03_ALPHA2:
+    if kind in {SchemaKind.V03_ALPHA2, SchemaKind.V03_ALPHA3}:
         issues = _validate_v02(connection)
         issues.extend(_validate_v03_alpha2_source_audit(connection))
         return tuple(issues)
@@ -2219,6 +3095,7 @@ def preflight_migration(
     mode: MigrationMode | str = MigrationMode.STRICT,
     create_backup: bool = True,
     minimum_free_bytes: int = 1024 * 1024,
+    attest_current_legacy_material: bool = False,
 ) -> MigrationReport:
     """Run read-only validation and optionally create a consistent backup.
 
@@ -2226,6 +3103,8 @@ def preflight_migration(
     original database is never modified by this function.
     """
 
+    if type(attest_current_legacy_material) is not bool:
+        raise TypeError("attest_current_legacy_material must be a bool")
     selected_mode = MigrationMode(mode)
     owns_connection = not isinstance(database, sqlite3.Connection)
     connection = (
@@ -2288,6 +3167,7 @@ def preflight_migration(
             SchemaKind.V01,
             SchemaKind.V02,
             SchemaKind.V03_ALPHA2,
+            SchemaKind.V03_ALPHA3,
         }:
             for table in source.tables:
                 escaped = '"' + table.replace('"', '""') + '"'
@@ -2343,6 +3223,7 @@ def preflight_migration(
             SchemaKind.V01,
             SchemaKind.V02,
             SchemaKind.V03_ALPHA2,
+            SchemaKind.V03_ALPHA3,
         } and not resource_limited:
             data_issues = list(validate_migration_data(connection, source.kind))
             if selected_mode is MigrationMode.QUARANTINE and source.kind is SchemaKind.V01:
@@ -2392,6 +3273,56 @@ def preflight_migration(
                 data_issues = converted
             issues.extend(data_issues)
 
+        material_plan = LegacyMaterialPlan(source_kind=source.kind)
+        if source.kind in {
+            SchemaKind.V01,
+            SchemaKind.V02,
+            SchemaKind.V03_ALPHA2,
+            SchemaKind.V03_ALPHA3,
+        } and not resource_limited:
+            material_plan = plan_legacy_material_checkpoints(
+                connection,
+                source.kind,
+            )
+            if source.kind is SchemaKind.V01 and quarantined:
+                quarantined_claims = {
+                    record_id
+                    for table, record_id in quarantined
+                    if table == "claims"
+                }
+                quarantined_events = {
+                    record_id
+                    for table, record_id in quarantined
+                    if table in {"narrative_events", "events"}
+                }
+                material_plan = replace(
+                    material_plan,
+                    claim_backfills=tuple(
+                        item
+                        for item in material_plan.claim_backfills
+                        if item not in quarantined_claims
+                    ),
+                    event_backfills=tuple(
+                        item
+                        for item in material_plan.event_backfills
+                        if item not in quarantined_events
+                    ),
+                )
+            issues.extend(material_plan.issues)
+            if (
+                material_plan.requires_explicit_attestation
+                and not attest_current_legacy_material
+            ):
+                _issue(
+                    issues,
+                    "MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED",
+                    "explicit operator acceptance of current legacy material is required",
+                    actual={
+                        "material_version": MATERIAL_VERSION,
+                        **dict(material_plan.acceptance_counts),
+                    },
+                )
+
         database_bytes = database_bytes if path is not None else None
         required_free = (
             max(minimum_free_bytes, (database_bytes or 0) * 2)
@@ -2424,13 +3355,31 @@ def preflight_migration(
             available_free_bytes=available_free,
             started_at=started,
             finished_at=_now(),
+            attestation_material_version=(
+                MATERIAL_VERSION
+                if source.kind
+                in {
+                    SchemaKind.V01,
+                    SchemaKind.V02,
+                    SchemaKind.V03_ALPHA2,
+                    SchemaKind.V03_ALPHA3,
+                }
+                else None
+            ),
+            attestation_counts=material_plan.checkpoint_counts,
             quarantined=tuple(sorted(quarantined)),
         )
 
         if (
             create_backup
             and path is not None
-            and source.kind in {SchemaKind.V01, SchemaKind.V02, SchemaKind.V03_ALPHA2}
+            and source.kind
+            in {
+                SchemaKind.V01,
+                SchemaKind.V02,
+                SchemaKind.V03_ALPHA2,
+                SchemaKind.V03_ALPHA3,
+            }
             and report.is_ready
         ):
             backup_path: Path | None = None
@@ -2532,12 +3481,16 @@ def migrate_to_v3(
     *,
     mode: MigrationMode | str = MigrationMode.STRICT,
     create_backup: bool = True,
+    attest_current_legacy_material: bool = False,
 ) -> MigrationReport:
     """Migrate a path through :class:`~continuityforge.storage.Storage`.
 
     The import is intentionally delayed so schema tooling remains usable while
     inspecting a damaged database and no module-level cycle is introduced.
     """
+
+    if type(attest_current_legacy_material) is not bool:
+        raise TypeError("attest_current_legacy_material must be a bool")
 
     from .storage import Storage
 
@@ -2546,6 +3499,7 @@ def migrate_to_v3(
             database,
             migration_mode=mode,
             create_backup=create_backup,
+            attest_current_legacy_material=attest_current_legacy_material,
         ) as storage:
             report = storage.migration_report
     except MigrationError:
@@ -2563,7 +3517,10 @@ __all__ = [
     "MigrationIssue",
     "MigrationMode",
     "MigrationReport",
+    "LegacyMaterialPlan",
+    "MaterialAttestationTarget",
     "migrate_to_v3",
     "preflight_migration",
+    "plan_legacy_material_checkpoints",
     "validate_migration_data",
 ]

@@ -1,4 +1,9 @@
 {
+  "attestations": {
+    "claims": 0,
+    "events": 0,
+    "material_version": 2
+  },
   "changed": true,
   "checks": {
     "available_free_bytes": 999999999,

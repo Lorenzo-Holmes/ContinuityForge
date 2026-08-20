@@ -132,21 +132,26 @@ def test_forged_event_ledger_payload_does_not_attest_raw_event(storage):
             "2026-08-19T00:00:00Z",
         ),
     )
-    storage.append_ledger(
-        "narrative_event.created",
-        "narrative_event",
-        "event_forged",
-        {
-            "persona_id": "someone-else",
-            "continuity": "beta",
-            "event_type": "forged.type",
-            "valid_from": None,
-            "knowledge_from": None,
-            "access_policy": "hidden",
-            "evidence_ids": [],
-            "evidence_refs": [],
-        },
-    )
+    with storage.transaction() as connection:
+        storage._append_ledger_in_transaction(
+            connection,
+            event_type="narrative_event.created",
+            aggregate_type="narrative_event",
+            aggregate_id="event_forged",
+            payload={
+                "persona_id": "someone-else",
+                "continuity": "beta",
+                "event_type": "forged.type",
+                "valid_from": None,
+                "knowledge_from": None,
+                "access_policy": "hidden",
+                "evidence_ids": [],
+                "evidence_refs": [],
+                "material_version": 2,
+                "aggregate_sha256": "0" * 64,
+                "evidence_set_sha256": "1" * 64,
+            },
+        )
 
     pack = MemoryCompiler(storage).compile(_cutoff())
     assert pack["events"] == []

@@ -25,6 +25,7 @@ LLM output -> PROPOSED data -> deterministic validation -> explicit human review
 | Choose among ambiguous impact candidates | Advisory text only | Human reviewer |
 | Change a claim to `DISPUTED` | No | Explicit governance decision |
 | Choose migration defaults | No | Versioned migration policy |
+| Accept current legacy Claim/Event/Evidence material | No | Explicit human/operator migration flag |
 | Repair malformed legacy time/access | No | Fail-closed migration/quarantine policy |
 | Verify EventLedger | No | Deterministic hash-chain verification |
 | Compile a Memory Pack | No | Deterministic filters |
@@ -87,7 +88,11 @@ Migration is a deterministic transformation of known schemas. An LLM must not:
 - repair a broken ledger;
 - choose which conflicting record to retain.
 
-Strict mode stops. In v0.3.0a3, explicit quarantine retains malformed v0.1 rows only in legacy storage and creates no active mapping for them; malformed v0.2 data still stops. No model participates in that decision.
+Strict mode stops. In v0.3.0a4, explicit quarantine retains malformed v0.1 rows only in legacy storage and creates no active mapping for them; malformed v0.2 data still stops. No model participates in that decision.
+
+Audit Material v2 is computed deterministically from every persisted Claim, NarrativeEvent, and Evidence field. Canonical v0.1 conversion can generate complete v2 creation records without consent. If an admitted legacy creation entry bound only partial material, or a v0.2 Claim/Event audit stream is empty, default migration stops before backup. `--attest-current-legacy-material` is an explicit operator statement accepting current complete material; an LLM must never select or infer that consent. Empty v0.2 streams receive v2 creation backfills (not attestation events), while partial creation records receive bound attestations.
+
+A read-only `migration-check` may report the accepted plan ready without a backup. The actual write must first verify a backup and then apply its backfill/attestation under `BEGIN IMMEDIATE`; omitting that backup fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`. The acceptance is a migration-time checkpoint, not a reconstruction of historical truth.
 
 ## Confidence is not authority
 

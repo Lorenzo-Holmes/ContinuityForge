@@ -20,6 +20,7 @@
     "started_at",
     "finished_at",
     "migrated_counts",
+    "attestations",
     "quarantine"
   ],
   "properties": {
@@ -85,6 +86,9 @@
     },
     "migrated_counts": {
       "$ref": "#/$defs/migratedCounts"
+    },
+    "attestations": {
+      "$ref": "#/$defs/attestations"
     },
     "quarantine": {
       "$ref": "#/$defs/quarantine"
@@ -185,6 +189,7 @@
             "v0.1",
             "v0.2",
             "v0.3-alpha2",
+            "v0.3-alpha3",
             "v0.3",
             "unknown",
             "partial"
@@ -339,6 +344,33 @@
           "$ref": "#/$defs/nonNegativeInteger"
         },
         "legacy_records": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        }
+      }
+    },
+    "attestations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "material_version",
+        "claims",
+        "events"
+      ],
+      "properties": {
+        "material_version": {
+          "oneOf": [
+            {
+              "const": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claims": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "events": {
           "$ref": "#/$defs/nonNegativeInteger"
         }
       }

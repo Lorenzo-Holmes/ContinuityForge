@@ -5,15 +5,61 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from continuityforge.cli import main
 from continuityforge.compiler import MemoryCompiler
 from continuityforge.models import GovernanceStatus, MemoryCutoff
 from continuityforge.storage import Storage
 
 
+V01_LOCK_CANONICAL_LF_SHA256 = (
+    "b419482b4379bece40fabff1b3ec79def9e7a58e24a3527c6619992d386f68e6"
+)
+GITATTRIBUTES_SHA256 = (
+    "478c02b1f48ee58779490871c4a5a6e8ddefef9ee330d1959a91319637c09df6"
+)
+
+
+def _canonical_lf_sha256(path: Path) -> str:
+    material = path.read_bytes()
+    without_crlf = material.replace(b"\r\n", b"")
+    if b"\r" in without_crlf:
+        raise AssertionError(f"bare CR line ending in pinned text: {path}")
+    if b"\r\n" in material and b"\n" in without_crlf:
+        raise AssertionError(f"mixed LF/CRLF line endings in pinned text: {path}")
+    canonical = material.replace(b"\r\n", b"\n")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _last_json(capsys):
     output = capsys.readouterr().out.strip()
     return json.loads(output)
+
+
+def test_v01_lock_manifest_and_repository_lf_policy_are_pinned(
+    project_root: Path,
+) -> None:
+    lock_path = project_root / "tests" / "baseline" / "v01_baseline.lock.json"
+    attributes_path = project_root / ".gitattributes"
+
+    assert _canonical_lf_sha256(lock_path) == V01_LOCK_CANONICAL_LF_SHA256
+    assert hashlib.sha256(attributes_path.read_bytes()).hexdigest() == GITATTRIBUTES_SHA256
+
+
+def test_v01_lock_canonical_hash_accepts_only_uniform_lf_or_crlf(
+    tmp_path: Path,
+) -> None:
+    probe = tmp_path / "probe.txt"
+    probe.write_bytes(b"first\nsecond\n")
+    lf_digest = _canonical_lf_sha256(probe)
+    probe.write_bytes(b"first\r\nsecond\r\n")
+    assert _canonical_lf_sha256(probe) == lf_digest
+
+    for malformed in (b"first\rsecond\r", b"first\r\nsecond\n"):
+        probe.write_bytes(malformed)
+        with pytest.raises(AssertionError, match="line ending"):
+            _canonical_lf_sha256(probe)
 
 
 def test_v01_contract_files_match_frozen_baseline(project_root: Path):

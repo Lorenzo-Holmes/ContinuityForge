@@ -2,8 +2,8 @@
 
 ## Status
 
-- Pure-domain Impact engine: **implemented, unreleased v0.3.0a3**.
-- Storage-aware `ReadOnlyProject`, aggregation service, and `source-impact` CLI: **implemented, unreleased v0.3.0a3**.
+- Pure-domain Impact engine: **implemented, unreleased v0.3.0a4**.
+- Storage-aware `ReadOnlyProject`, aggregation service, and `source-impact` CLI: **implemented, unreleased v0.3.0a4**.
 - Governance mutation from impact: explicitly excluded.
 
 ## Purpose
@@ -134,7 +134,7 @@ flowchart LR
 
 No outcome, including `NO_EXACT_MATCH`, automatically changes an `AUTHORIZED` claim. A new source revision may be editorial rather than semantic, and governance remains an explicit human decision.
 
-## Unreleased v0.3.0a3 `source-impact`
+## Unreleased v0.3.0a4 `source-impact`
 
 `source-impact` is implemented in the development tree and remains unreleased.
 Its JSON shape is frozen by the formal `continuityforge.source-impact/v0.3`

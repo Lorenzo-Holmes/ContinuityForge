@@ -37,22 +37,36 @@ def _file(
         [[30_000 + index, 40_000 + index]
          for index in range(len(missing_branch_details), missing_branches)]
     )
+    partial_sources = {pair[0] for pair in executed_branch_details} & {
+        pair[0] for pair in missing_branch_details
+    }
     return {
         "summary": {
             "covered_lines": covered_lines,
             "num_statements": statements,
+            "missing_lines": statements - covered_lines,
+            "excluded_lines": 0,
+            "num_branches": covered_branches + missing_branches,
+            "num_partial_branches": len(partial_sources),
             "covered_branches": covered_branches,
             "missing_branches": missing_branches,
         },
         "executed_lines": list(range(1, covered_lines + 1)),
         "missing_lines": list(range(covered_lines + 1, statements + 1)),
+        "excluded_lines": [],
         "executed_branches": executed_branch_details,
         "missing_branches": missing_branch_details,
     }
 
 
-def _payload(files: dict[str, dict[str, object]]) -> dict[str, object]:
-    return {"meta": {"format": 3}, "files": files}
+def _payload(
+    files: dict[str, dict[str, object]], *, format_version: object = 3
+) -> dict[str, object]:
+    totals = {
+        field: sum(int(entry["summary"][field]) for entry in files.values())  # type: ignore[index]
+        for field in coverage_gate.SUMMARY_COUNT_FIELDS
+    }
+    return {"meta": {"format": format_version}, "files": files, "totals": totals}
 
 
 def test_all_release_gates_pass_with_explicit_p0_p1_branches() -> None:
@@ -195,12 +209,123 @@ def test_executed_and_missing_branch_details_must_be_disjoint() -> None:
         coverage_gate.evaluate_coverage(payload)
 
 
+@pytest.mark.parametrize(
+    "raw_path",
+    [
+        "",
+        "/src/continuityforge/storage.py",
+        r"\\server\share\src\continuityforge\storage.py",
+        "C:/src/continuityforge/storage.py",
+        r"C:\src\continuityforge\storage.py",
+        "../src/continuityforge/storage.py",
+        "src/../continuityforge/storage.py",
+        "src//continuityforge/storage.py",
+        "src/continuityforge/",
+        "./src/continuityforge/storage.py",
+        "src/./continuityforge/storage.py",
+        "tests/continuityforge/storage.py",
+        "src/continuityforge/nested/storage.py",
+        "src/continuityforge/storage.txt",
+    ],
+)
+def test_measured_paths_must_be_unambiguous_package_modules(raw_path: str) -> None:
+    with pytest.raises(coverage_gate.CoverageInputError, match="coverage path"):
+        coverage_gate.evaluate_coverage(_payload({raw_path: _file()}))
+
+
+def test_slash_variants_cannot_overwrite_the_same_normalized_path() -> None:
+    payload = _payload(
+        {
+            r"src\continuityforge\storage.py": _file(),
+            "src/continuityforge/storage.py": _file(),
+        }
+    )
+
+    with pytest.raises(coverage_gate.CoverageInputError, match="duplicate normalized path"):
+        coverage_gate.evaluate_coverage(payload)
+
+
+@pytest.mark.parametrize("format_version", [None, True, 2, 3.0, "3"])
+def test_coverage_json_format_is_exact(format_version: object) -> None:
+    with pytest.raises(coverage_gate.CoverageInputError, match=r"meta\.format"):
+        coverage_gate.evaluate_coverage(
+            _payload(
+                {"src/continuityforge/storage.py": _file()},
+                format_version=format_version,
+            )
+        )
+
+
+@pytest.mark.parametrize("section", ["meta", "totals"])
+def test_required_top_level_mappings_cannot_be_omitted(section: str) -> None:
+    payload = _payload({"src/continuityforge/storage.py": _file()})
+    del payload[section]
+
+    with pytest.raises(coverage_gate.CoverageInputError, match=section):
+        coverage_gate.evaluate_coverage(payload)
+
+
+@pytest.mark.parametrize("field", coverage_gate.SUMMARY_COUNT_FIELDS)
+def test_top_level_totals_must_equal_per_file_summaries(field: str) -> None:
+    payload = _payload({"src/continuityforge/storage.py": _file()})
+    payload["totals"][field] += 1  # type: ignore[index,operator]
+
+    with pytest.raises(coverage_gate.CoverageInputError, match="coverage totals"):
+        coverage_gate.evaluate_coverage(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("missing_lines", 19, "missing-lines summary disagrees"),
+        ("excluded_lines", 1, "excluded-lines summary disagrees"),
+        ("num_branches", 99, "branch summary disagrees"),
+        ("num_partial_branches", 1, "partial-branches summary disagrees"),
+    ],
+)
+def test_extended_per_file_counters_must_match_details(
+    field: str, value: int, expected: str
+) -> None:
+    entry = _file()
+    entry["summary"][field] = value  # type: ignore[index]
+
+    with pytest.raises(coverage_gate.CoverageInputError, match=expected):
+        coverage_gate.evaluate_coverage(
+            _payload({"src/continuityforge/storage.py": entry})
+        )
+
+
+def test_exact_trusted_paths_prevent_basename_spoofing() -> None:
+    payload = _payload({"src/continuityforge/not_storage.py": _file()})
+
+    with pytest.raises(coverage_gate.CoverageInputError, match="no trusted"):
+        coverage_gate.evaluate_coverage(payload)
+
+
 def test_main_returns_input_error_for_invalid_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     report = tmp_path / "coverage.json"
     report.write_text("[]", encoding="utf-8")
 
     assert coverage_gate.main(["--json", str(report)]) == 2
     assert "COVERAGE INPUT ERROR" in capsys.readouterr().err
+
+
+def test_main_rejects_duplicate_raw_json_keys(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = tmp_path / "coverage.json"
+    path = "src/continuityforge/storage.py"
+    report.write_text(
+        '{"meta":{"format":3},"files":{"'
+        + path
+        + '":{},"'
+        + path
+        + '":{}},"totals":{}}',
+        encoding="utf-8",
+    )
+
+    assert coverage_gate.main(["--json", str(report)]) == 2
+    assert "duplicate key" in capsys.readouterr().err
 
 
 def test_main_renders_gate_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -17,26 +17,48 @@ from typing import Any, Iterable, Mapping, Sequence
 COMBINED_MINIMUM = 80.0
 GLOBAL_BRANCH_MINIMUM = 75.0
 TRUSTED_BRANCH_MINIMUM = 80.0
+COVERAGE_JSON_FORMAT = 3
+
+SUMMARY_COUNT_FIELDS = (
+    "covered_lines",
+    "num_statements",
+    "missing_lines",
+    "excluded_lines",
+    "num_branches",
+    "num_partial_branches",
+    "covered_branches",
+    "missing_branches",
+)
 
 TRUSTED_MODULES = frozenset(
     {
-        "schema.py",
-        "migrations.py",
-        "storage.py",
-        "readonly.py",
-        "inspection.py",
-        "compiler.py",
-        "validate.py",
-        "evidence.py",
-        "governance_integrity.py",
-        "event_integrity.py",
-        "source_integrity.py",
+        "src/continuityforge/audit_material.py",
+        "src/continuityforge/schema.py",
+        "src/continuityforge/migrations.py",
+        "src/continuityforge/storage.py",
+        "src/continuityforge/readonly.py",
+        "src/continuityforge/inspection.py",
+        "src/continuityforge/compiler.py",
+        "src/continuityforge/validate.py",
+        "src/continuityforge/evidence.py",
+        "src/continuityforge/governance_integrity.py",
+        "src/continuityforge/event_integrity.py",
+        "src/continuityforge/source_integrity.py",
     }
 )
 
 
 class CoverageInputError(ValueError):
     """The Coverage.py JSON did not have the contract this gate needs."""
+
+
+def _json_object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CoverageInputError(f"coverage JSON contains duplicate key: {key!r}")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True)
@@ -80,7 +102,30 @@ class CoverageGateReport:
 
 
 def _normalise_path(path: str) -> str:
-    return path.replace("\\", "/").lstrip("./")
+    if not isinstance(path, str) or not path:
+        raise CoverageInputError("coverage path must be non-empty text")
+    normalised = path.replace("\\", "/")
+    if normalised.startswith("/") or (
+        len(normalised) >= 2
+        and normalised[0].isalpha()
+        and normalised[1] == ":"
+    ):
+        raise CoverageInputError(f"coverage path must be repository-relative: {path!r}")
+    components = normalised.split("/")
+    if any(component == "" for component in components):
+        raise CoverageInputError(f"coverage path contains an empty component: {path!r}")
+    if any(component in {".", ".."} for component in components):
+        raise CoverageInputError(f"coverage path contains a dot component: {path!r}")
+    if (
+        len(components) != 3
+        or components[:2] != ["src", "continuityforge"]
+        or not components[2].endswith(".py")
+        or components[2] == ".py"
+    ):
+        raise CoverageInputError(
+            "coverage path must match src/continuityforge/*.py: " f"{path!r}"
+        )
+    return "/".join(components)
 
 
 def _summary_counts(summary: Mapping[str, Any], field: str) -> int:
@@ -109,18 +154,28 @@ def _files_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Mapping[str,
     for raw_path, entry in files.items():
         if not isinstance(raw_path, str) or not isinstance(entry, Mapping):
             raise CoverageInputError("coverage JSON files mapping contains an invalid entry")
+        path = _normalise_path(raw_path)
+        if path in result:
+            raise CoverageInputError(
+                f"coverage JSON contains duplicate normalized path: {path}"
+            )
         summary = entry.get("summary")
         if not isinstance(summary, Mapping):
             raise CoverageInputError(f"coverage JSON file {raw_path!r} is missing summary")
         # Validate all counters used by every gate before calculating anything.
-        for field in ("covered_lines", "num_statements", "covered_branches", "missing_branches"):
+        for field in SUMMARY_COUNT_FIELDS:
             _summary_counts(summary, field)
 
         executed_lines = _line_numbers(entry, "executed_lines")
         missing_lines = _line_numbers(entry, "missing_lines")
+        excluded_lines = _line_numbers(entry, "excluded_lines")
         if executed_lines & missing_lines:
             raise CoverageInputError(
                 f"coverage JSON file {raw_path!r} contains overlapping executed and missing lines"
+            )
+        if excluded_lines & (executed_lines | missing_lines):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} contains overlapping excluded and statement lines"
             )
         if _summary_counts(summary, "covered_lines") != len(executed_lines):
             raise CoverageInputError(
@@ -129,6 +184,14 @@ def _files_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Mapping[str,
         if _summary_counts(summary, "num_statements") != len(executed_lines | missing_lines):
             raise CoverageInputError(
                 f"coverage JSON file {raw_path!r} statement summary disagrees with details"
+            )
+        if _summary_counts(summary, "missing_lines") != len(missing_lines):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} missing-lines summary disagrees with details"
+            )
+        if _summary_counts(summary, "excluded_lines") != len(excluded_lines):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} excluded-lines summary disagrees with details"
             )
 
         executed_branches = _branch_pairs(entry, "executed_branches")
@@ -145,8 +208,49 @@ def _files_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Mapping[str,
             raise CoverageInputError(
                 f"coverage JSON file {raw_path!r} missing-branches summary disagrees with details"
             )
-        result[_normalise_path(raw_path)] = entry
+        if _summary_counts(summary, "num_branches") != len(
+            executed_branches | missing_branches
+        ):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} branch summary disagrees with details"
+            )
+        partial_sources = {source for source, _ in executed_branches} & {
+            source for source, _ in missing_branches
+        }
+        if _summary_counts(summary, "num_partial_branches") != len(partial_sources):
+            raise CoverageInputError(
+                f"coverage JSON file {raw_path!r} partial-branches summary disagrees with details"
+            )
+        result[path] = entry
     return result
+
+
+def _validate_metadata(payload: Mapping[str, Any]) -> None:
+    meta = payload.get("meta")
+    if not isinstance(meta, Mapping):
+        raise CoverageInputError("coverage JSON is missing its meta mapping")
+    format_version = meta.get("format")
+    if type(format_version) is not int or format_version != COVERAGE_JSON_FORMAT:
+        raise CoverageInputError(
+            f"coverage JSON meta.format must be {COVERAGE_JSON_FORMAT}"
+        )
+
+
+def _validate_totals(
+    payload: Mapping[str, Any], files: Mapping[str, Mapping[str, Any]]
+) -> None:
+    totals = payload.get("totals")
+    if not isinstance(totals, Mapping):
+        raise CoverageInputError("coverage JSON is missing its totals mapping")
+    for field in SUMMARY_COUNT_FIELDS:
+        actual = _summary_counts(totals, field)
+        expected = sum(
+            _summary_counts(entry["summary"], field) for entry in files.values()
+        )
+        if actual != expected:
+            raise CoverageInputError(
+                f"coverage totals field {field!r} disagrees with per-file summaries"
+            )
 
 
 def _branch_counts(entries: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
@@ -216,9 +320,11 @@ def evaluate_coverage(
     critical_files: Sequence[str] = (),
 ) -> CoverageGateReport:
     """Evaluate release gates without invoking Coverage.py itself."""
+    _validate_metadata(payload)
     files = _files_from_payload(payload)
     if not files:
         raise CoverageInputError("coverage JSON contains no measured files")
+    _validate_totals(payload, files)
 
     covered_lines = statements = 0
     for entry in files.values():
@@ -239,9 +345,7 @@ def evaluate_coverage(
         global_branch_minimum,
     )
 
-    trusted_entries = [
-        entry for path, entry in files.items() if path.rsplit("/", 1)[-1] in TRUSTED_MODULES
-    ]
+    trusted_entries = [entry for path, entry in files.items() if path in TRUSTED_MODULES]
     if not trusted_entries:
         raise CoverageInputError("coverage JSON contains no trusted ContinuityForge modules")
     trusted_covered, trusted_total = _branch_counts(trusted_entries)
@@ -317,7 +421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         with args.json.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+            payload = json.load(handle, object_pairs_hook=_json_object_without_duplicates)
         if not isinstance(payload, Mapping):
             raise CoverageInputError("coverage JSON root must be an object")
         report = evaluate_coverage(

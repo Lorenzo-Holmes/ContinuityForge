@@ -781,6 +781,7 @@ def test_event_audit_reports_all_malformed_creation_material() -> None:
         "EVENT_LEDGER_EVIDENCE_IDS_INVALID",
         "EVENT_LEDGER_EVIDENCE_REFS_INVALID",
         "EVENT_EVIDENCE_SET_LEDGER_MISMATCH",
+        "EVENT_MATERIAL_ATTESTATION_INVALID",
     }
     assert report.to_dict()["is_valid"] is False
 

@@ -23,12 +23,17 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Alpha package metadata plus coverage-gated Linux/Windows/macOS CI, Python 3.10-3.14 coverage, wheel/sdist inspection, clean-wheel installation, an unpacked-sdist North Pier smoke test, and a deterministic `SHA256SUMS` release manifest.
 - v0.3 architecture, threat-model, migration, backup/restore, data-model, security-testing, and demo-license documentation.
 - Original North Pier v1/v2 revision-impact fixtures.
+- Audit Material v2 canonical digests covering every persisted Claim, NarrativeEvent, and Evidence field, including stable complete evidence-set checkpoints.
+- Explicit `--attest-current-legacy-material` migration consent for admitted legacy partial creation records and empty v0.2 Claim/Event audit streams, with backup-first transactional attestations/backfills and `MigrationReport.attestations` counts.
+- An exact `v0.3-alpha3` compatibility edge and the final `continuityforge_ledger_material_guard` trigger for creation, evidence-checkpoint, and material-attestation records.
 
 ### Changed
 
 - Ordinary read, validation, compile, list, ledger, governance, and event commands no longer initialize or migrate a database as a side effect; legacy upgrades require the explicit `migrate` path.
 - `NO_EXACT_MATCH` documentation now states only that the old continuous exact quote is absent. It does not label the cause as editing, deletion, truncation, or line restructuring.
 - Source distributions now include the core documentation set, license notices, formal schemas, the release coverage checker, and executable North Pier fixtures while excluding tests and database/credential-like artifacts.
+- Coverage reports now accept only canonical direct `src/continuityforge/*.py` paths, reject aliases/duplicates and inconsistent Coverage.py totals, and treat `audit_material.py` as a trusted module.
+- The frozen v0.1 baseline meta-gate now recognizes only its canonical LF hash or the exact CRLF transport form, while rejecting mixed or lone-CR line endings.
 
 ### Fixed
 
@@ -36,10 +41,12 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Existing-database commands now return `DATABASE_NOT_FOUND` for a missing target without creating the database, parent directory, or SQLite sidecars.
 - Read-only CLI, Storage, and migration-preflight paths now reject an incomplete WAL/SHM sidecar set before SQLite can create a missing SHM file; caller-supplied SQLite URIs are rejected by `Storage.open_readonly`.
 - Migration backups are bound to the locked source through a streamed logical-database digest, and temporary-file identity is rechecked before any backup page is written.
+- Legacy partial creation payloads and empty v0.2 Claim/Event audit streams now fail closed unless the current invocation explicitly accepts current complete material; v0.1 creates Material-v2 records deterministically without opt-in, while a pre-existing legacy attestation is invalid and never substitutes for current consent.
+- Write migration now fails with stable code `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP` when required legacy-material acceptance would proceed without a verified backup; read-only `migration-check` may still report the accepted plan as ready.
 
 ### Pre-release limitations
 
-- v0.3.0a3 has not been released; its formal v0.3 command/report schemas are
+- v0.3.0a4 has not been released; its formal v0.3 command/report schemas are
   frozen and distributed with the source archive.
 - Restore and deployment activation remain operator workflows; there is no restore CLI.
 - HTTP, MCP, provider adapters, semantic impact, and automatic governance changes remain deferred.
@@ -49,6 +56,7 @@ All notable changes to ContinuityForge are recorded here. The format follows [Ke
 - Documented the trusted operating-system/SQLite-owner boundary.
 - Defined metadata-first administrative reports that omit complete source bodies by default.
 - Preserved the operator-only `NarrativeEvent` boundary and report-only impact behavior.
+- Restricted material attestations to a canonical six-key payload (`material_version`, both digests, attested event type/entry ID, and migration source kind) and reserved their ledger event types to trusted storage/migration paths.
 - Hardened migration backups with unpredictable same-directory temporary files, identity/type verification, POSIX `0600`, collision-safe no-replace publication, and symbolic-link rejection.
 - Enforced 80% combined coverage, 75% global branch coverage, 80% trusted-module branch coverage, explicit critical-branch/file gates, and both direct `ResourceWarning` and pytest unraisable-warning failures across the CI matrix.
 

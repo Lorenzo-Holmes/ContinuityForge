@@ -284,6 +284,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[item.value for item in MigrationMode],
         default=MigrationMode.STRICT.value,
     )
+    migration_check.add_argument(
+        "--attest-current-legacy-material",
+        action="store_true",
+        help=(
+            "accept the current complete Claim/Event/Evidence material as the "
+            "migration baseline when legacy audit entries did not bind it"
+        ),
+    )
     migration_check.set_defaults(
         handler=_handle_migration_check,
         lifecycle=CLI_COMMAND_LIFECYCLE["migration-check"],
@@ -300,6 +308,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=[item.value for item in MigrationMode],
         default=MigrationMode.STRICT.value,
+    )
+    migrate.add_argument(
+        "--attest-current-legacy-material",
+        action="store_true",
+        help=(
+            "after the verified backup, attest the current complete legacy "
+            "Claim/Event/Evidence material as the new audit baseline"
+        ),
     )
     migrate.set_defaults(
         handler=_handle_migrate,
@@ -556,6 +572,7 @@ def _handle_migration_check(
         args.db,
         mode=MigrationMode(args.mode),
         create_backup=False,
+        attest_current_legacy_material=args.attest_current_legacy_material,
     )
     print(json_dumps(report.to_dict()))
     return EXIT_OK if report.is_ready else EXIT_SCHEMA_FAILED
@@ -568,6 +585,7 @@ def _handle_migrate(_storage: Storage | None, args: argparse.Namespace) -> int:
         args.db,
         mode=MigrationMode(args.mode),
         create_backup=True,
+        attest_current_legacy_material=args.attest_current_legacy_material,
     )
     print(json_dumps(report.to_dict()))
     return EXIT_OK if report.succeeded else EXIT_SCHEMA_FAILED
@@ -701,7 +719,12 @@ def _require_readonly_sidecars(database: Path) -> None:
 def _require_current_database(database: str | Path) -> Path:
     resolved = _require_existing_database(database)
     kind = _database_schema_kind(resolved)
-    if kind in {SchemaKind.V01, SchemaKind.V02, SchemaKind.V03_ALPHA2}:
+    if kind in {
+        SchemaKind.V01,
+        SchemaKind.V02,
+        SchemaKind.V03_ALPHA2,
+        SchemaKind.V03_ALPHA3,
+    }:
         raise ExplicitMigrationRequiredError(
             "database requires explicit migration; run 'continuityforge migrate'"
         )
@@ -759,6 +782,17 @@ def _stable_error_code(exc: BaseException) -> str:
     if isinstance(exc, ExplicitMigrationRequiredError):
         return "MIGRATION_REQUIRED"
     if isinstance(exc, MigrationError):
+        report = getattr(exc, "report", None)
+        issues = getattr(report, "issues", ()) if report is not None else ()
+        blocking_codes = {
+            getattr(issue, "code", None)
+            for issue in issues
+            if getattr(issue, "severity", "error") == "error"
+        }
+        if blocking_codes == {
+            "MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED"
+        }:
+            return "MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED"
         return "MIGRATION_FAILED"
     if isinstance(exc, ReadOnlyStorageError):
         return "READ_ONLY_STORAGE_ERROR"

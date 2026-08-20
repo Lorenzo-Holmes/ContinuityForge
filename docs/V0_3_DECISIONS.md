@@ -27,6 +27,19 @@ weaken the frozen v0.1 observable contract or the v0.2 provenance model.
 5. **Schema version 3 is approved.** The migration must be transactional,
    fingerprinted, backed up, machine-reportable, and covered by restoration and
    regression tests.
+6. **Audit material binds the complete persisted aggregate.** Trusted Claim,
+   NarrativeEvent, and Evidence reads replay versioned canonical digests over
+   every persisted field; historical payload subsets are not silently accepted.
+7. **Legacy material acceptance distinguishes creation backfill from attestation.**
+   Canonical v0.1 deterministically generates Material-v2 creation records and
+   needs no consent. Partial legacy creation records and empty v0.2 Claim/Event
+   streams require current operator consent; the empty v0.2 path creates v2
+   creation records with zero attestation counts, while the partial path appends
+   bound attestations. Read-only preflight may be ready without a backup, but
+   every accepted write requires a verified backup first and otherwise fails
+   with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`. Consent is not a claim
+   about historical truth, and a pre-existing legacy attestation cannot
+   substitute for current consent.
 
 ## v0.3 implementation order
 

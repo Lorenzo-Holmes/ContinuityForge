@@ -12,9 +12,6 @@ from continuityforge.schema import SchemaKind, fingerprint_schema
 from continuityforge.storage import Storage
 
 
-_A3_SCHEMA_DIGEST = "f6f99a75e0f036fe511bc394eb58f1b39571731dee84283b9be3e554a6a16171"
-
-
 def _row(connection: sqlite3.Connection, table: str, key: str, value: object) -> dict:
     result = connection.execute(
         f'SELECT * FROM "{table}" WHERE "{key}" = ?', (value,)
@@ -68,7 +65,7 @@ def _insert_source(
     )
 
 
-def test_storage_enables_replace_delete_trigger_barrier_without_schema_change(
+def test_storage_enables_replace_delete_trigger_barrier_on_current_schema(
     tmp_path,
 ) -> None:
     database = tmp_path / "published-a3.db"
@@ -78,7 +75,6 @@ def test_storage_enables_replace_delete_trigger_barrier_without_schema_change(
         assert connection.execute("PRAGMA recursive_triggers").fetchone()[0] == 1
         fingerprint = fingerprint_schema(connection)
         assert fingerprint.kind is SchemaKind.V03
-        assert fingerprint.digest == _A3_SCHEMA_DIGEST
 
     with Storage(database) as reopened:
         assert reopened.migration_report is not None
@@ -86,7 +82,7 @@ def test_storage_enables_replace_delete_trigger_barrier_without_schema_change(
         assert reopened.connection.execute(
             "PRAGMA recursive_triggers"
         ).fetchone()[0] == 1
-        assert fingerprint_schema(reopened.connection).digest == _A3_SCHEMA_DIGEST
+        assert fingerprint_schema(reopened.connection).digest == fingerprint.digest
 
     assert list(tmp_path.glob("published-a3.db.pre-v3*.bak")) == []
 

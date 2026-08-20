@@ -57,29 +57,34 @@ def test_compiler_validator_and_inspection_reject_the_same_event_audit_break(
                 ),
             )
             if corruption == "payload_mismatch":
-                storage.append_ledger(
-                    "narrative_event.created",
-                    "narrative_event",
-                    event_id,
-                    {
-                        "persona_id": "wrong-persona",
-                        "continuity": "wrong-continuity",
-                        "event_type": "wrong.type",
-                        "valid_from": None,
-                        "knowledge_from": None,
-                        "access_policy": "hidden",
-                        "evidence_ids": ["evr_without_creation_audit"],
-                        "evidence_refs": [
-                            {
-                                "evidence_id": "evr_without_creation_audit",
-                                "snapshot_id": old.snapshot_id,
-                                "start_line": evidence.start_line,
-                                "end_line": evidence.end_line,
-                                "content_hash": evidence.content_hash,
-                            }
-                        ],
-                    },
-                )
+                with storage.transaction() as connection:
+                    storage._append_ledger_in_transaction(
+                        connection,
+                        event_type="narrative_event.created",
+                        aggregate_type="narrative_event",
+                        aggregate_id=event_id,
+                        payload={
+                            "persona_id": "wrong-persona",
+                            "continuity": "wrong-continuity",
+                            "event_type": "wrong.type",
+                            "valid_from": None,
+                            "knowledge_from": None,
+                            "access_policy": "hidden",
+                            "evidence_ids": ["evr_without_creation_audit"],
+                            "evidence_refs": [
+                                {
+                                    "evidence_id": "evr_without_creation_audit",
+                                    "snapshot_id": old.snapshot_id,
+                                    "start_line": evidence.start_line,
+                                    "end_line": evidence.end_line,
+                                    "content_hash": evidence.content_hash,
+                                }
+                            ],
+                            "material_version": 2,
+                            "aggregate_sha256": "0" * 64,
+                            "evidence_set_sha256": "1" * 64,
+                        },
+                    )
             storage.connection.execute(
                 "INSERT INTO event_evidence_refs "
                 "(evidence_id, event_id, snapshot_id, start_line, end_line, quote, "

@@ -7,7 +7,6 @@ import pytest
 from continuityforge.compiler import MemoryCompiler
 from continuityforge.evidence import build_evidence_ref
 from continuityforge.exceptions import (
-    EvidenceValidationError,
     InspectionIntegrityError,
     LedgerIntegrityError,
 )
@@ -153,25 +152,28 @@ def test_evidence_body_break_is_rejected_by_compiler_validator_and_inspection(
         assert storage.verify_ledger()
 
         validation = ProjectValidator(storage).validate()
-        assert "QUOTE_MISMATCH" in {issue.code for issue in validation.issues}
+        validation_codes = {issue.code for issue in validation.issues}
+        assert "QUOTE_MISMATCH" in validation_codes
+        assert "CLAIM_EVIDENCE_SET_MATERIAL_MISMATCH" in validation_codes
 
         pack = _compile(storage)
         assert pack["claims"] == []
         diagnostic = _diagnostic(pack, claim_id)
-        assert diagnostic["code"] == "EVIDENCE_INVALID"
-        assert "QUOTE_MISMATCH" in {
+        assert diagnostic["code"] == "AUTHORITY_CHAIN_INVALID"
+        assert "CLAIM_EVIDENCE_SET_MATERIAL_MISMATCH" in {
             issue["code"]
             for issue in diagnostic["details"]["issues"]  # type: ignore[index]
         }
 
     with ReadOnlyProject.open(database) as project:
-        with pytest.raises(EvidenceValidationError, match="quote does not match"):
+        with pytest.raises(InspectionIntegrityError) as caught:
             InspectionService(project).source_impact(
                 source_id,
                 continuity="alpha",
                 from_version=1,
                 to_version=2,
             )
+    assert caught.value.code == "CLAIM_AUTHORITY_INVALID"
 
 
 def test_global_ledger_break_is_rejected_by_compiler_validator_and_inspection(

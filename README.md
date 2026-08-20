@@ -10,7 +10,7 @@ ContinuityForge is a local, dependency-light compiler above RAG and memory store
 
 - **v0.1:** frozen observable compatibility baseline.
 - **v0.2.0:** current released CLI, SQLite, governance, ledger, and Memory Pack workflow.
-- **v0.3.0a3:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
+- **v0.3.0a4:** implemented but unreleased alpha under the accepted [owner decisions](docs/V0_3_DECISIONS.md), focused on SourceSnapshot revision impact, authority-chain integrity, strict migration, backup-gated upgrade, and read-only inspection.
 
 The v0.1 and v0.2 contracts remain intact while v0.3 is developed. The alpha
 feature set remains unreleased, while the documented v0.3 command, stream,
@@ -32,7 +32,7 @@ Released v0.2 behavior provides:
 - JSON Memory Packs retaining claim and evidence provenance;
 - zero third-party runtime dependencies.
 
-Implemented, unreleased v0.3.0a3 work strengthens those guarantees with:
+Implemented, unreleased v0.3.0a4 work strengthens those guarantees with:
 
 - strict built-in-integer evidence coordinates;
 - bounded, control-aware source ingestion;
@@ -45,7 +45,11 @@ Implemented, unreleased v0.3.0a3 work strengthens those guarantees with:
 - transactional, schema-fingerprinted, backup-gated v0.1/v0.2 to v0.3 migration;
 - private, collision-safe backup publication that never overwrites an existing artifact;
 - explicit CLI database lifecycles with no ordinary-command implicit migration;
-- functional v0.1 quarantine that preserves bad rows without mapping them into active authority.
+- functional v0.1 quarantine that preserves bad rows without mapping them into active authority;
+- Audit Material v2 digests that bind every persisted Claim, NarrativeEvent, and Evidence field used by trusted reads;
+- a fail-closed legacy-material gate requiring explicit operator acceptance for admitted partial creation records and empty v0.2 Claim/Event audit streams;
+- a final SQLite material guard that admits only canonical creation, evidence-checkpoint, and six-key attestation payloads;
+- canonical-path coverage ingestion and line-ending-aware v0.1 baseline-lock verification.
 
 The alpha currently passes the complete regression suite. Its v0.3 machine
 outputs are frozen by the [CLI contract](docs/CLI_CONTRACT.md) and the bundled
@@ -77,7 +81,7 @@ Snapshot impact is **report-only**. A new source version can produce an impact r
 
 ### Source-body disclosure
 
-v0.3.0a3 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
+v0.3.0a4 administrative report surfaces are metadata-first: impact and migration reports default to IDs, versions, hashes, line spans, statuses, counts, and error codes—not complete `SourceSnapshot.content` bodies. Explicit evidence operations and compiled Memory Packs may include the cited quote span as provenance. Treat those exports, database access, and migration backup files as disclosure boundaries.
 
 ## Architecture at a glance
 
@@ -175,7 +179,7 @@ continuityforge --db forge.db compile \
 
 Use `continuityforge COMMAND --help` for released options.
 
-## v0.3.0a3 database lifecycle
+## v0.3.0a4 database lifecycle
 
 Every command now declares how it may interact with the database path:
 
@@ -188,7 +192,7 @@ Every command now declares how it may interact with the database path:
 
 A missing existing-database target fails with `DATABASE_NOT_FOUND` and no filesystem side effects. An ordinary command aimed at a recognized legacy database fails closed instead of constructing writable `Storage`; run `migration-check`, then `migrate` explicitly.
 
-## v0.3.0a3 preview CLI—implemented, unreleased
+## v0.3.0a4 preview CLI—implemented, unreleased
 
 These commands are executable in the development tree. Their flags, streams,
 exit codes, and JSON report shapes are tested against the formal
@@ -213,15 +217,27 @@ continuityforge --db project.db migration-check --mode strict
 
 # Explicit write operation. This refuses a missing database and is backup-gated.
 continuityforge --db project.db migrate --mode strict
+
+# Only when preflight reports MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED:
+continuityforge --db project.db migration-check --mode strict \
+  --attest-current-legacy-material
+continuityforge --db project.db migrate --mode strict \
+  --attest-current-legacy-material
 ```
 
-`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error. No restore CLI is included in v0.3.0a3; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
+`source-impact` also accepts `--source-id` instead of `--source-key`, and `--to-version` is an alias for `--target-version`. Both migration commands accept `--mode strict|quarantine`; quarantine only isolates malformed v0.1 rows and malformed v0.2 data remains a blocking error.
+
+`--attest-current-legacy-material` is a deliberate operator acceptance of the current complete Claim/Event/Evidence material when an admitted legacy creation payload did not bind it or a v0.2 Claim/Event audit stream is empty. Canonical v0.1 conversion deterministically creates Material-v2 creation records and needs no opt-in. An eligible empty v0.2 stream requires the flag, but migration generates a Material-v2 creation record rather than an attestation event, so its `MigrationReport.attestations` Claim/Event count remains zero. Existing partial legacy creation records instead receive bound attestation events.
+
+`migration-check --attest-current-legacy-material` remains read-only and may report `is_ready: true` without creating a backup. A write migration that needs this acceptance must first create and verify its backup, then perform the creation backfill or attestation inside `BEGIN IMMEDIATE`; a library migration configured without backup fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`. The acceptance proves what was accepted at migration time, not what a historical creation payload contained, and a pre-existing legacy attestation never substitutes for consent on the current invocation.
+
+No restore CLI is included in v0.3.0a4; follow [Backup and Restore](docs/BACKUP_AND_RESTORE.md) for staged operator recovery.
 
 Affected event evidence is admitted to an impact report only after the complete bounded event batch is replayed against its creation ledger material inside the same pinned read transaction. A mismatch fails closed with `EVENT_AUDIT_INVALID`; inspection does not downgrade the event to an unaudited anchor.
 
 ## Deterministic Impact API
 
-The v0.3.0a3 pure-domain Impact engine is available to library callers in the development tree:
+The v0.3.0a4 pure-domain Impact engine is available to library callers in the development tree:
 
 ```python
 from continuityforge.impact import analyze_evidence_impact
@@ -254,7 +270,7 @@ continuityforge --db north-pier.db ingest examples/north_pier/north_pier_v2.txt 
   --continuity alpha --source-key north-pier-field-log
 ```
 
-The v0.3.0a3 development tree can inspect the imported revisions with the
+The v0.3.0a4 development tree can inspect the imported revisions with the
 `source-impact` syntax above. The report is metadata-only and follows the
 formal `continuityforge.source-impact/v0.3` schema. Demo data licensing is
 documented in [Demo Licenses](docs/DEMO_LICENSES.md).

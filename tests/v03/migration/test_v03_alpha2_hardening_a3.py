@@ -11,22 +11,22 @@ from continuityforge.exceptions import MigrationError, ReadOnlyStorageError
 from continuityforge.migrations import migrate_to_v3, preflight_migration
 from continuityforge.schema import (
     SchemaKind,
+    V03_ALPHA2_REQUIRED_TRIGGERS,
     V03_ALPHA2_SCHEMA_DIGEST,
+    V03_REQUIRED_TRIGGERS,
     fingerprint_schema,
 )
 from continuityforge.storage import Storage
 
 
-_FINAL_INPUT_LIMIT_TRIGGERS = (
-    "continuityforge_claims_input_limits",
-    "continuityforge_events_input_limits",
-)
 _FINAL_SOURCE_TRIGGERS = (
     "continuityforge_sources_identity_immutable",
     "continuityforge_sources_updated_at_guard",
     "continuityforge_sources_no_delete",
 )
-_FINAL_V03_TRIGGERS = _FINAL_INPUT_LIMIT_TRIGGERS + _FINAL_SOURCE_TRIGGERS
+_FINAL_V03_TRIGGERS = tuple(
+    sorted(V03_REQUIRED_TRIGGERS - V03_ALPHA2_REQUIRED_TRIGGERS)
+)
 
 
 def _make_v03_alpha2(database: Path) -> tuple[str, tuple[int, str]]:

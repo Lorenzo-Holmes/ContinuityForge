@@ -103,10 +103,38 @@ marker. `status`, `is_ready`, `succeeded`, and `changed` are separate fields;
 clients must not infer one solely from another. A preflight report with
 `is_ready: false` is the normal not-ready result described in the stream table.
 
+Both migration commands accept the boolean `--attest-current-legacy-material`
+flag. Without it, an admitted legacy partial creation payload or empty v0.2
+Claim/Event audit stream produces
+`MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED` before backup or mutation.
+The flag on `migration-check` changes only the read-only plan and may make that
+plan ready without creating a backup. The flag on `migrate` authorizes either a
+v2 creation backfill for an empty v0.2 stream or a bound attestation for an
+existing partial creation record. The write path must first verify a backup;
+otherwise it fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
+Canonical v0.1 conversion does not require the flag.
+
+Every report contains the closed `attestations` object with
+`material_version`, `claims`, and `events`. `material_version` is `2` when an
+admitted legacy source is evaluated against the Material-v2 migration protocol
+and otherwise `null`; the two non-negative counts describe actual planned or
+written Claim/Event attestation entries and exclude creation backfills. An
+accepted empty v0.2 stream therefore has zero Claim/Event attestation counts
+even though the opt-in was mandatory. These fields do not assert historical
+truth.
+
 Migration issue `code` and `severity` are machine fields. `message` and
 `actual` are diagnostics. Sensitive or unsafe values may appear only as
 bounded redacted descriptors. Filesystem paths must not be used as stable
 identifiers.
+
+Legacy creation records that predate complete Audit Material v2, plus empty
+v0.2 Claim/Event streams that need creation backfill, require the explicit
+`--attest-current-legacy-material` option on both `migration-check` and
+`migrate`. The option is false by default. It accepts the complete current
+Claim/Event/Evidence rows as a new migration baseline; it does not prove their
+historical values. A legacy database cannot satisfy this consent gate by
+containing a lookalike attestation of its own.
 
 ## Compatibility changes
 
@@ -130,6 +158,7 @@ the exact three paths are present. Schema validation tests require
 must not publish an sdist that fails either assertion.
 
 The sdist also includes `scripts/check_coverage.py`, allowing the release
-coverage policy to be reproduced from a Coverage.py JSON report. CI publishes
+coverage policy to be reproduced from a Coverage.py JSON format-3 report with
+canonical direct package paths and internally consistent totals. CI publishes
 exactly the wheel, sdist, and `SHA256SUMS`; checksum rows are deterministic and
 ordered wheel first, sdist second.

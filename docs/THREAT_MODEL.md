@@ -32,6 +32,7 @@ An attacker able to replace the entire database and its internal ledger is out o
 | Persona/continuity scope | Isolation |
 | Governance decisions | Authenticity and auditability |
 | EventLedger | Ordered integrity signal |
+| Audit Material v2 digests | Complete persisted aggregate/evidence binding |
 | Access policy | Fail-closed confidentiality boundary |
 | Time intervals/cutoffs | Temporal integrity |
 | Migration/backup artifacts | Recoverability and confidentiality |
@@ -60,9 +61,12 @@ An attacker able to replace the entire database and its internal ledger is out o
 | Source revision silently invalidates memory | Deterministic report-only impact inspection | Human review is required; no automatic dispute transition |
 | Duplicate text creates false relocation certainty | `EXACT_MOVED_AMBIGUOUS` with all sorted candidates | Human must choose or reject a candidate |
 | Materialized status or event lacks audit backing | Shared claim-authority/event replay across compiler, validator, and inspection | Full DB replacement by trusted owner is not detected |
+| Claim/Event/Evidence field is changed while legacy payload bound only a subset, or v0.2 audit is absent | Audit Material v2 covers every persisted field; partial creation and empty v0.2 Claim/Event streams require explicit acceptance | Operator acceptance covers current material and does not prove historical truth |
+| Reserved material event is malformed or forged through a normal API | Trusted event reservation plus the final exact-shape SQLite material guard | Direct replacement of a consistently rehashed database remains out of scope |
 | Source key/continuity is rewritten after evidence was created | Immutable identity/no-delete triggers plus shared Source audit replay | A trusted owner can replace and consistently rehash the entire database |
 | Source revision metadata is detached from audit history | Snapshot immutability, lineage triggers, exact creation-payload replay, and `updated_at == latest snapshot.created_at` | Internal hashes are not externally anchored |
 | Ordinary command silently migrates or creates a target | Explicit per-command database lifecycle and existing-file checks | A trusted operator can still invoke `migrate` intentionally |
+| Accepted material history changes without recovery artifact | Verified-backup gate; `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP` | A trusted operator remains responsible for retaining/restoring the artifact |
 | Partial migration | Preflight, backup gate, one transaction, post-verification | Disk or hardware failure may require external recovery |
 | Unsafe live DB copy | SQLite backup API / consistent snapshot requirement | External tools can still make unsafe copies |
 | Backup path replacement or disclosure | Unpredictable private temp, identity/type checks, POSIX `0600`, no-replace publication, symlink rejection | No built-in encryption; containing directory/Windows ACL remain operator controls |
@@ -101,7 +105,9 @@ Impact outcomes never mutate governance. `EXACT_MOVED_UNIQUE` is not authorizati
 - Authorization rechecks evidence and conflicts.
 - Status transitions are explicit and reasoned.
 - v0.3 verifies decision and ledger backing before compilation.
-- v0.3 binds the authorized evidence set to proposal/evidence ledger payloads, and binds each operator event to one matching creation record.
+- Audit Material v2 binds every persisted Claim/Event/Evidence field through canonical aggregate and complete evidence-set digests.
+- Claim evidence changes carry complete v2 checkpoints; each operator event is bound to one matching creation record.
+- The final material guard requires typed version/digest fields on creation and evidence checkpoints, plus exact six-key migration attestations, before ledger insertion.
 - compilation uses one pinned read transaction so concurrent reviews cannot create a mixed-state Memory Pack.
 - Ledger hashes provide internal tamper evidence, not protection against full-database replacement.
 
@@ -118,7 +124,11 @@ Schema-v3 migration follows these principles:
 7. verify schema, ledger, counts, and fingerprints before activation;
 8. retain the backup until a restoration drill succeeds.
 
-The exact v0.3.0a2 structural fingerprint has a same-version hardening edge to final v0.3. Preflight rejects missing or divergent Source audit before publishing a backup. A successful hardening installs only the Source identity, `updated_at`, and no-delete triggers and preserves the existing EventLedger head.
+The exact `v0.3-alpha2` structural fingerprint has a same-version hardening edge to final v0.3. Preflight rejects missing or divergent Source audit before publishing a backup. The exact `v0.3-alpha3` shape is also recognized, but its partial Claim/Event creation payloads require explicit current-invocation material acceptance.
+
+Canonical v0.1 conversion deterministically generates Material-v2 creation records and needs no consent. Partial legacy creation material and empty v0.2 Claim/Event streams fail closed by default. With `--attest-current-legacy-material`, read-only `migration-check` may report the plan ready without creating a backup. The actual migration must verify a backup first and then, inside `BEGIN IMMEDIATE`, generate v2 creation records for accepted empty v0.2 streams and append bound attestations for partial creation records before installing the final guard. A write configured without backup fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
+
+Empty v0.2 backfills create no attestation event, so their report attestation counts remain zero. Any pre-existing legacy material-attestation event is invalid and blocks migration; it cannot substitute for current consent. An appended attestation proves only which complete current material was accepted during migration, not which values were historically true at creation time.
 
 The implementation writes to an unpredictable same-directory temporary regular file, tracks its identity, enforces POSIX mode `0600`, verifies identity before writing, compares a streamed logical digest with the locked source connection, flushes the artifact, then publishes without replacing an existing destination. Existing regular backups are preserved through numbered names; symbolic-link candidates fail closed. These controls prevent accidental overwrite and common path-substitution mistakes inside the stated trusted-owner boundary, but they are not encryption or a defense against a malicious operating-system account.
 
@@ -133,7 +143,7 @@ an already-existing single-link regular SHM while leaving the main database,
 WAL, schema, and domain state unchanged. Inspect a private consistent copy when
 byte-for-byte filesystem immutability is required.
 
-In v0.3.0a3, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
+In v0.3.0a4, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
 
 ## Disclosure boundaries
 

@@ -29,6 +29,7 @@
     "migration_report": "continuityforge.migration-report/v0.3",
     "source_impact": "continuityforge.source-impact/v0.3"
   },
+  "migration_attestation_option": "--attest-current-legacy-material",
   "migration_modes": [
     "strict",
     "quarantine"

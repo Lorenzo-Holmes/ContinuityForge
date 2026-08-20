@@ -160,6 +160,11 @@ def _runtime_migration_report(value: dict[str, Any]) -> MigrationReport:
         started_at=value["started_at"],
         finished_at=value["finished_at"],
         migrated_counts=tuple(value["migrated_counts"].items()),
+        attestation_material_version=value["attestations"]["material_version"],
+        attestation_counts=(
+            ("claims", value["attestations"]["claims"]),
+            ("events", value["attestations"]["events"]),
+        ),
         quarantined=tuple(
             (record["table"], record["record_id"])
             for record in value["quarantine"]["records"]
@@ -342,6 +347,16 @@ def test_cli_lifecycle_exit_and_stream_contract_matches_golden() -> None:
     assert tuple(mode.value for mode in MigrationMode) == tuple(
         contract["migration_modes"]
     )
+    assert contract["migration_attestation_option"] == (
+        "--attest-current-legacy-material"
+    )
+    for command in ("migration-check", "migrate"):
+        default = cli.build_parser().parse_args([command])
+        accepted = cli.build_parser().parse_args(
+            [command, contract["migration_attestation_option"]]
+        )
+        assert default.attest_current_legacy_material is False
+        assert accepted.attest_current_legacy_material is True
     assert contract["json_schemas"] == {
         "error": ERROR_SCHEMA,
         "migration_report": MIGRATION_REPORT_SCHEMA,

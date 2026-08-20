@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 
-EXPECTED_VERSION = "0.3.0a3"
+EXPECTED_VERSION = "0.3.0a4"
 FORBIDDEN_SUFFIXES = {
     ".bak",
     ".backup",

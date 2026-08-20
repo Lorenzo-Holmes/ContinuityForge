@@ -2,11 +2,17 @@
 
 ## Status
 
-The unreleased v0.3.0a3 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
+The unreleased v0.3.0a4 `migrate` command implements a mandatory, consistent, verified pre-migration backup. `migration-check` is strictly read-only and never creates a backup. Restore, activation, retention, and external encryption remain operator workflows; there is no restore CLI.
 
 ```bash
 continuityforge --db project.db migration-check --mode strict
 continuityforge --db project.db migrate --mode strict
+
+# Conditional: only after the default preflight requires legacy-material consent.
+continuityforge --db project.db migration-check --mode strict \
+  --attest-current-legacy-material
+continuityforge --db project.db migrate --mode strict \
+  --attest-current-legacy-material
 ```
 
 ## Why ordinary file copying is insufficient
@@ -26,9 +32,10 @@ A migration-grade backup must:
 7. have a SHA-256 recorded after close;
 8. emit metadata without embedding source bodies;
 9. be published without replacing any existing path or following a symbolic-link target;
-10. remain available until migration and restoration verification complete.
+10. remain available until migration and restoration verification complete;
+11. precede any legacy material-attestation or final material-trigger write.
 
-The v0.3.0a3 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
+The v0.3.0a4 implementation builds the SQLite backup in an unpredictable same-directory temporary file, tracks the file identity, verifies it is still a regular file before any backup page is written, flushes it, and publishes the verified artifact without replacement. It also compares a streamed logical-database digest from the locked source connection with the independently reopened backup, so a same-schema path replacement cannot be published as the source backup. Existing backup names are preserved and a numbered name is selected. A symbolic-link candidate fails closed rather than being followed. On POSIX, the temporary and published artifact must retain mode `0600`; on Windows, the process applies the platform file mode and the operator must also protect the containing directory and ACL.
 
 ## Migration backup metadata
 
@@ -52,16 +59,35 @@ to:
     "backup_path": "project.db.pre-v3.bak",
     "backup_sha256": "BACKUP_SHA256"
   },
-  "status": "migrated"
+  "status": "migrated",
+  "attestations": {"material_version": 2, "claims": 3, "events": 1}
 }
 ```
 
 The full JSON also contains schema object lists, capacity checks, target
-fingerprint, timestamps, migrated counts, issues, and quarantine records. Its
+fingerprint, timestamps, migrated counts, issues, `attestations`, and quarantine
+records. Its Claim/Event attestation counts reflect appended attestation events:
+an accepted empty v0.2 creation backfill therefore reports zero. Its
 exact shape is frozen by the [v0.3 CLI contract](CLI_CONTRACT.md). The backup
 filename is collision-safe: later runs use `.pre-v3.2.bak`, `.pre-v3.3.bak`,
 and so on rather than overwriting an existing artifact. Backup creation and
 verification complete before the migration transaction begins.
+
+When `--attest-current-legacy-material` is required, the backup is therefore a
+copy of the still-unmodified legacy database. Only after that artifact is
+independently verified does the write path enter `BEGIN IMMEDIATE`, generate
+Material-v2 creation records for accepted empty v0.2 Claim/Event streams and/or
+append bound attestations for existing partial creation records, install the
+final guard, and run post-verification. The acceptance states which current
+complete material the operator accepted; it is not evidence of historical
+truth.
+
+`migration-check --attest-current-legacy-material` deliberately runs with
+backup creation disabled and may report `is_ready: true`: it validates a
+read-only plan, not permission to write without recovery evidence. A library
+write migration configured with `create_backup=False` fails before any accepted
+backfill or attestation with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
+Canonical v0.1 conversion is deterministic and does not use this consent gate.
 
 ## Confidentiality
 
@@ -104,7 +130,8 @@ Activation may be an atomic rename or deployment-specific pointer switch, but it
 - source/snapshot/evidence counts match the manifest or migration report;
 - snapshot and evidence hashes validate;
 - EventLedger verifies;
-- authority-chain verification succeeds;
+- authority-chain and Audit Material v2 replay succeed;
+- report `attestations` counts agree with the migrated ledger when present;
 - `human_only`/`hidden` access remains non-exportable by default;
 - representative pre/post-cutoff Memory Packs behave as expected;
 - read-only impact/inspection reports do not mutate the database;
@@ -130,6 +157,6 @@ Treat the artifact as unusable. Create a new consistent backup from a verified s
 
 ## Operational ownership
 
-The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a3 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
+The operator is responsible for storage location, file permissions, external encryption, retention, off-site replication, restoration, and activation. The v0.3.0a4 migration path creates and verifies the backup artifact and returns machine-readable path/hash evidence, but it does not copy backups off-site or perform activation.
 
 See [Migration v3](MIGRATION_V3.md) and [Threat Model](THREAT_MODEL.md).

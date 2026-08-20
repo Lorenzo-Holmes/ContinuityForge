@@ -32,6 +32,7 @@ class SchemaKind(str, Enum):
     V01 = "v0.1"
     V02 = "v0.2"
     V03_ALPHA2 = "v0.3-alpha2"
+    V03_ALPHA3 = "v0.3-alpha3"
     V03 = "v0.3"
     UNKNOWN = "unknown"
     PARTIAL = "partial"
@@ -229,7 +230,7 @@ V03_ALPHA2_REQUIRED_TRIGGERS = frozenset(
 )
 
 
-V03_REQUIRED_TRIGGERS = V03_ALPHA2_REQUIRED_TRIGGERS | {
+V03_ALPHA3_REQUIRED_TRIGGERS = V03_ALPHA2_REQUIRED_TRIGGERS | {
     "continuityforge_claims_input_limits",
     "continuityforge_events_input_limits",
     "continuityforge_sources_identity_immutable",
@@ -238,11 +239,24 @@ V03_REQUIRED_TRIGGERS = V03_ALPHA2_REQUIRED_TRIGGERS | {
 }
 
 
+V03_REQUIRED_TRIGGERS = V03_ALPHA3_REQUIRED_TRIGGERS | {
+    "continuityforge_ledger_material_guard",
+}
+
+
 # Exact structural digest shipped by 0.3.0a2.  No broader same-version shape is
 # admitted: an unknown schema-3 database remains PARTIAL and requires operator
 # inspection rather than being silently blessed by the compatibility edge.
 V03_ALPHA2_SCHEMA_DIGEST = (
     "b0b0314af69f3a4d7051fc28af5bab23ccb5831d0245683b3ad9edc225edc237"
+)
+
+
+# Exact structural digest shipped by 0.3.0a3.  It remains a narrow explicit
+# migration source after v2 material binding adds a real EventLedger insert
+# constraint; arbitrary schema-3 variants are never admitted as alpha3.
+V03_ALPHA3_SCHEMA_DIGEST = (
+    "f6f99a75e0f036fe511bc394eb58f1b39571731dee84283b9be3e554a6a16171"
 )
 
 
@@ -303,6 +317,7 @@ CANONICAL_TRIGGER_SQL_DIGESTS: Mapping[str, str] = {
     "continuityforge_evidence_no_update": "6b9fe887b795913771db5bb074694ed49bffea8f908b7ad4d4c5180ec80d1a3f",
     "continuityforge_evidence_reviewable_insert": "3b6e1b7d61c273c1dddbc800c056a494fd84658319f6fb20a11ec059f99aa244",
     "continuityforge_ledger_no_delete": "4b4ff8c4b878135e0bd6e9b4507422ae4d54d4e5bff1810e091b6f41c92d94c0",
+    "continuityforge_ledger_material_guard": "9e9a723da29b39486cdee983751b88ac32d932045474d2747daf516219f953f5",
     "continuityforge_ledger_no_update": "792984a5ea8bd60b0fb0a735981c0f147803a033311a770195186cae6679736f",
     "continuityforge_snapshot_lineage_insert": "e9324f417a83f9389ca5db4c08faceda8e1125c1f04fb47378896a0beab1e4e9",
     "continuityforge_snapshots_no_delete": "a5556a7a9dd123500d81aabfa01836a1abcdc1c1f9eb57a625b6cf47a6d39b57",
@@ -331,6 +346,7 @@ ALLOWED_MIGRATIONS = frozenset(
         (SchemaKind.V01, SchemaKind.V03),
         (SchemaKind.V02, SchemaKind.V03),
         (SchemaKind.V03_ALPHA2, SchemaKind.V03),
+        (SchemaKind.V03_ALPHA3, SchemaKind.V03),
     }
 )
 
@@ -569,6 +585,22 @@ def _classify(
             ):
                 return SchemaKind.V03
             if (
+                structural_digest == V03_ALPHA3_SCHEMA_DIGEST
+                and has_event_evidence
+                and _has_only_known_tables(tables, allow_event_evidence=True)
+                and triggers == V03_ALPHA3_REQUIRED_TRIGGERS
+                and not views
+                and _has_canonical_sql(
+                    objects,
+                    tables=tables,
+                    triggers=triggers,
+                    indexes=indexes,
+                    allow_v02_snapshot_hash_unique=False,
+                    allow_event_evidence=True,
+                )
+            ):
+                return SchemaKind.V03_ALPHA3
+            if (
                 structural_digest == V03_ALPHA2_SCHEMA_DIGEST
                 and has_event_evidence
                 and _has_only_known_tables(tables, allow_event_evidence=True)
@@ -724,6 +756,8 @@ __all__ = [
     "V02_REQUIRED_TRIGGERS",
     "V03_ALPHA2_REQUIRED_TRIGGERS",
     "V03_ALPHA2_SCHEMA_DIGEST",
+    "V03_ALPHA3_REQUIRED_TRIGGERS",
+    "V03_ALPHA3_SCHEMA_DIGEST",
     "V03_REQUIRED_TRIGGERS",
     "V2_CORE_TABLE_COLUMNS",
     "classify_schema",

@@ -6,7 +6,7 @@
 - v0.2 introduces logical sources, immutable versions, proposal governance, narrative events, and EventLedger.
 - v0.3 adds stricter authority/migration invariants and read-only impact/inspection reports without changing snapshot history automatically.
 
-Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a3 development tree. Report values are transient and need not be persisted.
+Schema version 3 and the inspection/migration domain reports are implemented in the unreleased v0.3.0a4 development tree. Report values are transient and need not be persisted.
 
 ## Entity overview
 
@@ -113,7 +113,7 @@ stateDiagram-v2
     DISPUTED --> REJECTED
 ```
 
-v0.3 authority integrity checks that a materialized status, decision sequence, and current evidence set are exactly backed by proposal/evidence/decision ledger history.
+v0.3 authority integrity checks that a materialized status, `updated_at`, decision sequence, and current evidence set are exactly backed by proposal/evidence/decision ledger history. Audit Material v2 additionally binds the complete persisted creation-state Claim row and every Evidence field, rather than a text-only subset.
 
 ## `NarrativeEvent`
 
@@ -126,7 +126,7 @@ valid_from, valid_to, knowledge_from, knowledge_to,
 access_policy, created_at
 ```
 
-Events have immutable evidence references. v0.3 requires exactly one matching `narrative_event.created` ledger entry whose core fields and evidence material match storage. Models must not create events; they use `ClaimProposal`.
+Events have immutable evidence references. v0.3 requires exactly one matching `narrative_event.created` ledger entry whose Audit Material v2 digests match every persisted event field and the complete evidence set. Models must not create events; they use `ClaimProposal`.
 
 ## Persisted aggregate input limits
 
@@ -144,7 +144,7 @@ values without truncation:
 | canonical `NarrativeEvent.details_json` | 1 MiB | `EVENT_DETAILS_INVALID` |
 
 Migration preflight applies these limits before backup or schema mutation. A
-v0.2 or v0.3-alpha2 oversize row blocks migration; explicit v0.1 quarantine
+v0.2, v0.3-alpha2, or v0.3-alpha3 oversize row blocks migration; explicit v0.1 quarantine
 retains the complete raw row and creates no partial active aggregate or ledger
 entry.
 
@@ -167,6 +167,18 @@ Intervals are half-open `[from, to)` and use normalized UTC ISO-8601 values.
 - **MemoryCutoff:** persona, continuity, knowledge instant, optional valid instant, and allowed access policies.
 
 Knowledge and valid time are independent. Omitting `valid_at` does not reuse the knowledge cutoff as a validity filter.
+
+## Audit Material v2
+
+Audit Material v2 is a canonical, versioned digest layer over persisted aggregates:
+
+- Claim material covers identity/scope, text and SPO fields, both time intervals, access policy, confidence, proposal attribution/model/rationale, deterministic creation status/timestamps, and every persisted Evidence field.
+- NarrativeEvent material covers identity/scope, event type, title, summary, canonical details, both time intervals, access policy, creation time, and every persisted Evidence field.
+- Evidence-set material is order-independent, duplicate-preserving, owner-typed, and includes IDs, owner IDs, snapshot/span/character coordinates, quote, content hash, and creation time.
+
+Creation and Claim evidence-checkpoint ledger payloads carry `material_version: 2`, `aggregate_sha256`, and `evidence_set_sha256`. Trusted replay recomputes the digests from the same pinned database state before accepting a Claim or event. The final schema's `continuityforge_ledger_material_guard` rejects missing or loosely typed creation/checkpoint digests and requires an exact six-key attestation payload before those events enter the immutable ledger.
+
+Canonical v0.1 conversion deterministically writes Material-v2 creation records and needs no material-consent flag. An empty v0.2 Claim/Event audit stream does require current-invocation acceptance, but migration backfills a Material-v2 creation record and does not append an attestation event. Admitted legacy partial creation entries are never rewritten; with the same explicit consent, migration appends a separate six-key attestation that names the exact creation event type/entry ID and migration source kind. Acceptance identifies the complete material accepted during migration and does not prove historical creation-time truth.
 
 ## `LedgerEntry`
 
@@ -196,7 +208,7 @@ A frozen, non-persisted-by-default exact-match result:
 
 It excludes the quote and complete source body by default and has no authority to mutate claim status.
 
-## Inspection and migration reports (v0.3.0a3)
+## Inspection and migration reports (v0.3.0a4)
 
 `SourceImpactReport` aggregates:
 
@@ -208,7 +220,7 @@ It excludes the quote and complete source body by default and has no authority t
 
 `ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the global ledger, affected-claim authority, and complete audit material for every affected event before returning a report. Event-audit divergence fails closed as `EVENT_AUDIT_INVALID` rather than exposing an unaudited event anchor.
 
-The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary final-v0.3 read/write surfaces reject it until the explicit backup-gated migration installs Source integrity and aggregate input-limit triggers. That same-version hardening preserves the EventLedger head, rejects oversize aggregates before backup, and refuses to reconstruct missing Source audit.
+The exact a2 and a3 schema shapes are identified separately as `v0.3-alpha2` and `v0.3-alpha3`; ordinary final-v0.3 read/write surfaces reject them until explicit backup-gated migration. The alpha2 edge installs later Source/input-limit hardening, while alpha3 also requires explicit current-material acceptance for its partial Claim/Event creation payloads and installs the final material guard. Both reject oversize aggregates before backup and refuse to reconstruct missing Source audit.
 
 `MigrationReport` carries:
 
@@ -216,7 +228,10 @@ The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary fi
 - status, readiness, success, and changed markers;
 - stable issues and SQLite/capacity checks;
 - backup path and SHA-256 for write migration;
-- timestamps, migrated counts, and quarantined v0.1 row IDs.
+- timestamps, migrated counts, and quarantined v0.1 row IDs;
+- `attestations: {material_version, claims, events}` describing the Material-v2 migration protocol and actual planned/written attestation entries; creation backfills are excluded, so an accepted empty v0.2 stream reports zero counts.
+
+A read-only accepted preflight may be ready without a backup. Any actual migration that needs accepted empty-stream backfill or partial-record attestation must have a verified backup first; otherwise it fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
 
 These reports are metadata-first. Exact serialized fields, markers, ordering,
 streams, and exit codes are frozen in the [v0.3 CLI

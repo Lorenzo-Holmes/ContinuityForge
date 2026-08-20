@@ -3,9 +3,9 @@
 ## Status vocabulary
 
 - **Released:** available in v0.2.0.
-- **Implemented, unreleased:** present in the v0.3.0a3 development code and tests.
+- **Implemented, unreleased:** present in the v0.3.0a4 development code and tests.
 - **Accepted contract:** approved in [V0_3_DECISIONS.md](V0_3_DECISIONS.md); integration may still be in progress.
-- **Deferred:** intentionally outside v0.3.0a3.
+- **Deferred:** intentionally outside v0.3.0a4.
 
 ## System context
 
@@ -57,7 +57,7 @@ flowchart TB
 
 ### Domain values
 
-`models.py`, `impact_models.py`, and shared line/time helpers define IDs, intervals, access policies, evidence spans, and frozen reports. They do not open a database or call a model.
+`models.py`, `impact_models.py`, and shared line/time helpers define IDs, intervals, access policies, evidence spans, and frozen reports. `audit_material.py` is a pure canonicalization layer that hashes every persisted Claim/Event/Evidence field into versioned aggregate and evidence-set digests. These modules do not open a database or call a model.
 
 ### Ingestion and evidence
 
@@ -71,13 +71,15 @@ Because `EvidenceRef` does not carry logical-source lineage, this two-value engi
 
 ### Governance, authority, and Source integrity
 
-Governance records explicit status transitions. Authorization rechecks evidence and deterministic conflicts. v0.3 authority integrity verifies that an `AUTHORIZED` materialized status is backed by a complete decision, evidence-set, and ledger chain before compilation. Operator-authored `NarrativeEvent` rows and their complete evidence sets are likewise bound to exactly one creation ledger record. Compiler, validator, and impact inspection replay the same event-audit rule before trusting an event.
+Governance records explicit status transitions. Authorization rechecks evidence and deterministic conflicts. v0.3 authority integrity verifies that an `AUTHORIZED` materialized status and `updated_at` are backed by a complete decision, evidence-set, and ledger chain before compilation. Audit Material v2 binds every persisted Claim/Event/Evidence field, not only fields previously copied into creation payloads. Operator-authored `NarrativeEvent` rows and their complete evidence sets are likewise bound to exactly one creation record or one explicitly migrated legacy attestation. Compiler, validator, migration, and impact inspection replay the shared rules before trusting an aggregate.
 
 `source_integrity.py` independently binds every logical Source and its complete revision lineage to `source.created` and `source_snapshot.created`. It is a pure deterministic replay shared by validator, compiler, migration, and read-only inspection; it neither reads SQLite directly nor repairs history.
 
 ### SQLite storage
 
-Storage owns transactions, immutable-row triggers, version allocation, evidence persistence, governance decisions, narrative events, legacy records, and the database-wide EventLedger. Schema-v3 migration and its verified backup gate operate at this boundary.
+Storage owns transactions, immutable-row triggers, version allocation, evidence persistence, governance decisions, narrative events, legacy records, and the database-wide EventLedger. The final material guard restricts creation/checkpoint/attestation payloads to canonical versioned shapes. Schema-v3 migration, explicit legacy-material acceptance, and the verified backup gate operate at this boundary.
+
+Canonical v0.1 rows deterministically become Material-v2 creation records without consent. An empty v0.2 Claim/Event audit stream requires explicit acceptance but is repaired with a v2 creation backfill, while an existing partial legacy creation record receives a separate attestation. Both accepted write paths require a verified backup before the `BEGIN IMMEDIATE` mutation; only read-only `migration-check` may report the plan ready without creating that backup.
 
 ### Compiler
 
@@ -146,6 +148,8 @@ Impact is report-only. The inspection path has no authority to change claim stat
 | LLM output cannot set authoritative status | Governance proposal boundary |
 | `AUTHORIZED` requires evidence/conflict checks | Governance service |
 | Materialized authority has decision/evidence/ledger backing | v0.3 authority integrity |
+| Every persisted Claim/Event/Evidence field is digest-bound | Audit Material v2 replay |
+| Reserved material events have canonical payload shapes | Final SQLite material guard plus trusted storage APIs |
 | Operator event and evidence have one matching audit record | v0.3 event integrity |
 | Compiler, validator, and inspection agree on event-audit validity | Shared deterministic event-audit replay |
 | Compiler, validator, and inspection agree on Source-audit validity | Shared deterministic Source-audit replay |
@@ -154,6 +158,7 @@ Impact is report-only. The inspection path has no authority to change claim stat
 | Future knowledge does not enter an earlier cutoff | Compiler knowledge-time filter |
 | Impact never mutates governance | Impact/inspection architecture |
 | Migration cannot broaden malformed legacy authority/access | Schema-v3 fail-closed contract |
+| Accepted legacy-material writes never precede a verified backup | Migration backup gate (`MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`) |
 | Ordinary commands cannot initialize or migrate a legacy path as a side effect | Explicit CLI database lifecycles |
 
 ## Time model
@@ -175,7 +180,7 @@ Complete `SourceSnapshot.content` is excluded by default. Evidence-specific APIs
 
 ## Compatibility architecture
 
-- The v0.1 baseline is byte-locked and exercised on every supported platform.
+- The v0.1 baseline is byte-locked and exercised on every supported platform; its meta-gate accepts only the canonical LF bytes or the exact CRLF transport form, never mixed/lone-CR content.
 - v0.2 compatibility aliases and Memory Pack fields remain available.
 - Schema changes require transactional migration and preservation of immutable provenance.
 - v0.3 impact reports are additive and do not reinterpret existing claim status.

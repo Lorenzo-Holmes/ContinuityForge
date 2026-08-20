@@ -113,8 +113,8 @@ jobs:
           (
             cd dist
             sha256sum \
-              continuityforge-0.3.0a3-py3-none-any.whl \
-              continuityforge-0.3.0a3.tar.gz \
+              continuityforge-0.3.0a4-py3-none-any.whl \
+              continuityforge-0.3.0a4.tar.gz \
               > SHA256SUMS
           )
       - name: Inspect distribution contents and metadata
@@ -124,8 +124,8 @@ jobs:
       - name: Install wheel in a clean environment
         run: |
           python -m venv .wheel-venv
-          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a3
-          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a3"
+          .wheel-venv/bin/python -m pip install --no-index --find-links dist continuityforge==0.3.0a4
+          test "$(.wheel-venv/bin/continuityforge --version)" = "continuityforge 0.3.0a4"
           .wheel-venv/bin/continuityforge source-impact --help
           .wheel-venv/bin/continuityforge migration-check --help
           .wheel-venv/bin/continuityforge migrate --help
@@ -135,8 +135,8 @@ jobs:
       - name: Run North Pier from the unpacked source archive
         run: |
           mkdir .sdist-smoke
-          tar -xzf dist/continuityforge-0.3.0a3.tar.gz -C .sdist-smoke
-          SDIST_ROOT="$PWD/.sdist-smoke/continuityforge-0.3.0a3"
+          tar -xzf dist/continuityforge-0.3.0a4.tar.gz -C .sdist-smoke
+          SDIST_ROOT="$PWD/.sdist-smoke/continuityforge-0.3.0a4"
           test -f "$SDIST_ROOT/examples/north_pier/run_demo.py"
           (
             cd "$RUNNER_TEMP"
@@ -150,10 +150,10 @@ jobs:
       - name: Upload distributions
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: continuityforge-0.3.0a3
+          name: continuityforge-0.3.0a4
           path: |
-            dist/continuityforge-0.3.0a3-py3-none-any.whl
-            dist/continuityforge-0.3.0a3.tar.gz
+            dist/continuityforge-0.3.0a4-py3-none-any.whl
+            dist/continuityforge-0.3.0a4.tar.gz
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

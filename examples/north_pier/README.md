@@ -70,7 +70,7 @@ from continuityforge.impact import analyze_evidence_impact
 report = analyze_evidence_impact(evidence, target_snapshot)
 ```
 
-The v0.3.0a3 development tree implements storage-aware aggregation for claim and event evidence:
+The v0.3.0a4 development tree implements storage-aware aggregation for claim and event evidence:
 
 ```bash
 continuityforge --db north-pier.db source-impact \

@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
+from .audit_material import (
+    EVENT_ATTESTATION_EVENT,
+    EVENT_CREATION_EVENT,
+    AuditMaterialDigests,
+    event_material_digests,
+    parse_material_digests,
+    validate_material_attestation_payload,
+)
 from .models import EvidenceRef, LedgerEntry, NarrativeEvent
 
 
@@ -73,6 +81,113 @@ def _material_key(material: Mapping[str, Any]) -> tuple[Any, ...]:
         material.get("start_line"),
         material.get("end_line"),
         material.get("content_hash"),
+    )
+
+
+def _check_event_material_digest(
+    *,
+    issues: list[EventAuditIssue],
+    actual: AuditMaterialDigests,
+    expected: AuditMaterialDigests,
+    sequence: int,
+) -> None:
+    if actual.aggregate_sha256 != expected.aggregate_sha256:
+        _issue(
+            issues,
+            "EVENT_AGGREGATE_MATERIAL_MISMATCH",
+            "narrative event row differs from its audited v2 material",
+            sequence=sequence,
+        )
+    if actual.evidence_set_sha256 != expected.evidence_set_sha256:
+        _issue(
+            issues,
+            "EVENT_EVIDENCE_SET_MATERIAL_MISMATCH",
+            "narrative event evidence differs from its audited v2 material",
+            sequence=sequence,
+        )
+
+
+def _validate_event_material(
+    event: NarrativeEvent,
+    creation_entry: LedgerEntry,
+    ledger_entries: Sequence[LedgerEntry],
+    evidence: Sequence[EvidenceRef],
+    issues: list[EventAuditIssue],
+) -> None:
+    expected = event_material_digests(event, evidence)
+    try:
+        creation_material = parse_material_digests(creation_entry.payload)
+    except (TypeError, ValueError):
+        _issue(
+            issues,
+            "EVENT_MATERIAL_VERSION_INVALID",
+            "narrative_event.created has malformed or unsupported audit material",
+            sequence=creation_entry.sequence,
+        )
+        return
+
+    attestations = [
+        entry
+        for entry in ledger_entries
+        if entry.event_type == EVENT_ATTESTATION_EVENT
+    ]
+    if creation_material is not None:
+        _check_event_material_digest(
+            issues=issues,
+            actual=creation_material,
+            expected=expected,
+            sequence=creation_entry.sequence,
+        )
+        if attestations:
+            _issue(
+                issues,
+                "EVENT_MATERIAL_ATTESTATION_INVALID",
+                "a v2 narrative-event creation entry must not be migration-attested",
+                count=len(attestations),
+            )
+        return
+
+    if len(attestations) != 1:
+        _issue(
+            issues,
+            "EVENT_MATERIAL_ATTESTATION_INVALID",
+            "a legacy narrative-event creation entry requires exactly one migration attestation",
+            count=len(attestations),
+        )
+        return
+
+    attestation = attestations[0]
+    if (
+        attestation.aggregate_type != "narrative_event"
+        or attestation.aggregate_id != event.event_id
+        or attestation.sequence <= creation_entry.sequence
+    ):
+        _issue(
+            issues,
+            "EVENT_MATERIAL_ATTESTATION_INVALID",
+            "narrative-event material attestation has invalid aggregate identity or order",
+            sequence=attestation.sequence,
+        )
+        return
+    try:
+        attested = validate_material_attestation_payload(
+            attestation.payload,
+            attested_event_type=EVENT_CREATION_EVENT,
+            attested_entry_id=creation_entry.entry_id,
+        )
+    except (TypeError, ValueError):
+        _issue(
+            issues,
+            "EVENT_MATERIAL_ATTESTATION_INVALID",
+            "narrative-event material attestation payload is invalid",
+            sequence=attestation.sequence,
+        )
+        return
+    _check_event_material_digest(
+        issues=issues,
+        actual=attested,
+        expected=expected,
+        sequence=attestation.sequence,
     )
 
 
@@ -191,6 +306,13 @@ def replay_event_audit(
                 stored_count=len(actual_material),
                 ledger_count=len(ledger_material),
             )
+        _validate_event_material(
+            event,
+            entry,
+            ledger_entries,
+            actual_evidence,
+            issues,
+        )
 
     return EventAuditReport(
         event_id=event.event_id,

@@ -1,6 +1,6 @@
 # Security Testing
 
-This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a3 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
+This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. It covers the released v0.1/v0.2 contracts and the unreleased v0.3.0a4 implementation. A passing test suite supports the stated boundaries; it does not extend them to a hostile operating-system or database owner.
 
 ## Test layers
 
@@ -10,10 +10,11 @@ This document turns the [threat model](THREAT_MODEL.md) into repeatable tests. I
 | v0.2 regression | Protect versioning, evidence, governance, ledger, compiler, CLI, and migration behavior | `tests/` |
 | Strict evidence | Reject non-built-in integers and malformed spans | `tests/v03/evidence/` |
 | Authority/event integrity | Detect missing, contradictory, or evidence-divergent audit history | `tests/v03/governance/` |
+| Audit Material v2 | Bind all persisted Claim/Event/Evidence fields, canonical payloads, and complete evidence sets | `tests/v03/security/test_audit_material_a4.py`, `tests/v03/security/test_material_binding_a4.py` |
 | Trusted-surface parity | Require compiler, validator, and inspection to reject the same forged event audit | `tests/v03/security/test_event_audit_surface_parity.py` |
 | Snapshot impact | Prove deterministic classification, stable ordering, and invalid-input handling | `tests/v03/impact/unit/` |
 | Input limits | Bound source size, line length, JSON shape, and unsafe control characters | `tests/v03/security/input_limits/` |
-| Schema migration | Exercise read-only preflight, strict conversion, quarantine, backup gate, and rollback | `tests/v03/migration/`, `tests/v03/schema/` |
+| Schema migration | Exercise read-only preflight, strict conversion, quarantine, backup gate, explicit material attestation, and rollback | `tests/v03/migration/`, `tests/v03/schema/` |
 | Read-only inspection | Prove no database mutation and metadata-first output | `tests/v03/readonly/`, `tests/v03/impact/integration/` |
 | Alpha CLI/contracts | Verify explicit database lifecycles, no implicit migration, stable error envelopes, and alpha command behavior | `tests/v03/cli/`, `tests/v03/contracts/` |
 | Distribution | Verify clean wheel/sdist metadata and require core docs, licenses, and the North Pier demo in the sdist | `tests/v03/packaging/` |
@@ -37,7 +38,9 @@ Release CI treats both direct `ResourceWarning` and pytest's `PytestUnraisableEx
 - at least 80% branch coverage across trusted modules;
 - 100% for each configured critical branch and critical file.
 
-`scripts/check_coverage.py` enforces the latter three policies from `coverage.json`; CI also asks pytest-cov to fail below the 80% combined threshold. The checker is included in the source distribution so an unpacked release can reproduce the policy.
+`scripts/check_coverage.py` enforces the latter three policies from `coverage.json`; CI also asks pytest-cov to fail below the 80% combined threshold. The checker accepts only canonical direct `src/continuityforge/*.py` paths, rejects absolute/dot/empty/nested aliases and duplicate normalized paths, requires Coverage.py JSON format 3, and verifies per-file totals against the global totals. `audit_material.py` is part of the trusted-module gate. The checker is included in the source distribution so an unpacked release can reproduce the policy.
+
+The v0.1 baseline meta-gate hashes canonical LF bytes and separately admits only the exact CRLF transport form. Mixed line endings and lone carriage returns fail rather than being normalized into an apparently valid baseline.
 
 ## Threat-to-test matrix
 
@@ -50,6 +53,8 @@ Release CI treats both direct `ResourceWarning` and pytest's `PytestUnraisableEx
 | Duplicate JSON keys | Ingest rejects ambiguous structure rather than choosing one value. |
 | Disallowed control characters | Ingest rejects them with deterministic diagnostics. |
 | Missing authority history | An `AUTHORIZED` row without a valid decision chain is excluded or reported invalid. |
+| Persisted Claim/Event/Evidence field changed outside trusted storage | Audit Material v2 replay rejects the aggregate on validator/compiler/inspection surfaces. |
+| Incomplete reserved digest or extra-key material attestation | The final SQLite material guard rejects the insert before it enters the ledger. |
 | Event row without matching creation audit | Compiler, validator, and source-impact inspection reject the same audit divergence; inspection emits `EVENT_AUDIT_INVALID`. |
 | Concurrent review during compilation | The Memory Pack uses one pinned SQLite snapshot and never mixes old authority with new evidence. |
 | Ledger reorder, update, or deletion | Chain verification fails. |
@@ -58,6 +63,9 @@ Release CI treats both direct `ResourceWarning` and pytest's `PytestUnraisableEx
 | Old exact quote absent from target | Impact returns `NO_EXACT_MATCH`; it does not infer whether the cause was editing, deletion, truncation, or restructuring. |
 | Impact analysis | No claim status, decision, snapshot, evidence, or ledger row changes. |
 | Malformed legacy row | Preflight blocks migration or quarantines it without increasing authority/access. |
+| Legacy partial creation payload or empty v0.2 Claim/Event stream without current consent | Preflight emits `MIGRATION_LEGACY_MATERIAL_ATTESTATION_REQUIRED`, creates no backup, and writes nothing. |
+| Pre-existing legacy material attestation | Migration rejects it; stored material events never substitute for the current invocation's opt-in. |
+| Accepted material write with backup disabled | Migration fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`; no backfill or attestation is written. |
 | Migration failure | The transaction rolls back and the verified pre-migration backup remains restorable. |
 | Missing database for an existing-database command | `DATABASE_NOT_FOUND`; no database, parent directory, journal, WAL, SHM, or backup is created. |
 | Legacy database passed to an ordinary command | The command requires explicit migration and does not invoke a writable migration path. |
@@ -93,11 +101,17 @@ Every supported starting schema needs at least these cases:
 6. a restored v0.1/v0.2 fixture still passes its observable compatibility suite;
 7. preflight and inspection leave the main database, WAL, schema, and logical row counts unchanged; SQLite may update coordination bytes in an already-existing `-shm` file.
 8. backup publication preserves existing regular artifacts, rejects symbolic-link targets, verifies file identity/type, and retains POSIX mode `0600`.
-9. every read-only entry point rejects symbolic links, broken links, directories, non-regular WAL/SHM sidecars, sidecar link counts other than one, and reused non-zero database/sidecar file identities before SQLite opens the database; a WAL without SHM is rejected without creating SHM.
+9. every read-only entry point rejects symbolic links, broken links, directories, non-regular WAL/SHM sidecars, sidecar link counts other than one, and reused non-zero database/sidecar file identities before SQLite opens the database; a WAL without SHM is rejected without creating SHM;
+10. admitted legacy partial creation material and empty v0.2 Claim/Event streams fail before backup by default; with explicit opt-in, actual backfills/attestations occur only after verified backup and inside the migration transaction;
+11. pre-existing attestations, wrong creation-entry bindings, wrong migration source kinds, and non-canonical six-key payloads block migration;
+12. v0.1 creation backfills carry Material v2 directly without opt-in; eligible empty v0.2 backfills require explicit opt-in and a verified backup, carry Material v2 directly, create no attestation entry, and leave report attestation counts at zero;
+13. `migration-check` with explicit material acceptance may be ready without a backup, while a library write with backup disabled fails with `MIGRATION_MATERIAL_ATTESTATION_REQUIRES_BACKUP`.
 
 `migration-check` is implemented but unreleased. Its CLI path sets
 `create_backup=False`; tests must assert no database, missing sidecar, backup,
-schema, or logical row creation/mutation. When inspecting a live WAL database,
+schema, or logical row creation/mutation. With the explicit material flag it
+may report a ready plan, but this does not relax the actual write backup gate.
+When inspecting a live WAL database,
 SQLite may update coordination bytes in an already-existing `-shm` file;
 callers that require byte-for-byte filesystem immutability must inspect a
 private consistent copy. Its JSON shape and stream/exit semantics are frozen
@@ -126,7 +140,7 @@ Evidence views and Memory Packs intentionally can include cited quote spans. Tes
 A v0.3 release candidate is blocked until:
 
 - the full supported CI matrix passes;
-- the v0.1 baseline hashes and observable contract remain unchanged;
+- the v0.1 baseline canonical LF hash and exact CRLF transport hash remain accepted, while mixed/lone-CR variants remain rejected;
 - v0.2 regression tests pass without weakening assertions;
 - migration rollback and staged restore tests pass;
 - default administrative-report redaction tests pass;
