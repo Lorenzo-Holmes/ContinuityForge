@@ -43,6 +43,7 @@ from .models import (
 )
 from .ingest import SourceInputError, parse_json_content
 from .schema import SchemaFingerprint, SchemaKind, fingerprint_schema
+from .source_integrity import SourceAuditSnapshot
 
 
 GENESIS_HASH = "0" * 64
@@ -78,6 +79,14 @@ class EventAuditMaterial:
 
     ledger_entries: tuple[LedgerEntry, ...]
     evidence: tuple[EvidenceRef, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAuditMaterial:
+    """Bounded Source lineage and ledger correspondence for inspection."""
+
+    snapshots: tuple[SourceAuditSnapshot, ...]
+    ledger_entries: tuple[LedgerEntry, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -702,6 +711,28 @@ class ReadOnlyProject:
         sql += " ORDER BY s.source_key, s.continuity, ss.version, ss.snapshot_id"
         return [self._snapshot(row) for row in self.connection.execute(sql, params)]
 
+    def list_source_audit_snapshots(self) -> list[SourceAuditSnapshot]:
+        rows = self.connection.execute(
+            "SELECT snapshot_id, source_id, version, content_hash, media_type, "
+            "origin_path, previous_snapshot_id, line_count, created_at "
+            "FROM source_snapshots ORDER BY source_id, version, snapshot_id"
+        )
+        return [self._source_audit_snapshot(row) for row in rows]
+
+    @staticmethod
+    def _source_audit_snapshot(row: sqlite3.Row) -> SourceAuditSnapshot:
+        return SourceAuditSnapshot(
+            snapshot_id=str(row["snapshot_id"]),
+            source_id=str(row["source_id"]),
+            version=int(row["version"]),
+            content_hash=str(row["content_hash"]),
+            media_type=str(row["media_type"]),
+            origin_path=row["origin_path"],
+            previous_snapshot_id=row["previous_snapshot_id"],
+            line_count=int(row["line_count"]),
+            created_at=str(row["created_at"]),
+        )
+
     # ------------------------------------------------------------------
     # Claims, events, and evidence
     # ------------------------------------------------------------------
@@ -1193,6 +1224,80 @@ class ReadOnlyProject:
             expected_previous = entry_hash
             expected_sequence += 1
 
+    def get_source_audit_for_source(
+        self,
+        source_id: str,
+        *,
+        max_records: int,
+        max_material_bytes: int,
+    ) -> SourceAuditMaterial:
+        """Load one complete Source audit stream under explicit SQL-side bounds."""
+
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("source_id must be non-empty")
+        if type(max_records) is not int or max_records < 1:
+            raise ValueError("max_records must be a positive built-in integer")
+        if type(max_material_bytes) is not int or max_material_bytes < 1:
+            raise ValueError("max_material_bytes must be a positive built-in integer")
+        snapshots = "SELECT snapshot_id FROM source_snapshots WHERE source_id = ?"
+        stats = self.connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM source_snapshots WHERE source_id = ?) AS snapshots, "
+            "(SELECT COUNT(*) FROM event_ledger WHERE "
+            "(event_type = 'source.created' AND aggregate_id = ?) OR "
+            "(event_type = 'source_snapshot.created' AND aggregate_id IN ("
+            + snapshots
+            + "))) AS ledger_entries, "
+            "(SELECT COALESCE(SUM("
+            "length(CAST(snapshot_id AS BLOB)) + length(CAST(source_id AS BLOB)) + "
+            "length(CAST(content_hash AS BLOB)) + length(CAST(media_type AS BLOB)) + "
+            "length(CAST(COALESCE(origin_path, '') AS BLOB)) + "
+            "length(CAST(COALESCE(previous_snapshot_id, '') AS BLOB)) + "
+            "length(CAST(created_at AS BLOB))), 0) FROM source_snapshots "
+            "WHERE source_id = ?) + "
+            "(SELECT COALESCE(SUM(length(CAST(payload_json AS BLOB))), 0) "
+            "FROM event_ledger WHERE "
+            "(event_type = 'source.created' AND aggregate_id = ?) OR "
+            "(event_type = 'source_snapshot.created' AND aggregate_id IN ("
+            + snapshots
+            + "))) AS material_bytes",
+            (source_id, source_id, source_id, source_id, source_id, source_id),
+        ).fetchone()
+        assert stats is not None
+        total = int(stats["snapshots"]) + int(stats["ledger_entries"])
+        if total > max_records:
+            raise InspectionLimitError(
+                "INSPECTION_SOURCE_AUDIT_RECORD_LIMIT_EXCEEDED",
+                "Source audit material exceeds the inspection record limit",
+            )
+        if int(stats["material_bytes"]) > max_material_bytes:
+            raise InspectionLimitError(
+                "INSPECTION_SOURCE_AUDIT_BYTES_LIMIT_EXCEEDED",
+                "Source audit material exceeds the inspection byte limit",
+            )
+        snapshot_rows = self.connection.execute(
+            "SELECT snapshot_id, source_id, version, content_hash, media_type, "
+            "origin_path, previous_snapshot_id, line_count, created_at "
+            "FROM source_snapshots WHERE source_id = ? "
+            "ORDER BY version, snapshot_id",
+            (source_id,),
+        )
+        audit_snapshots = tuple(
+            self._source_audit_snapshot(row) for row in snapshot_rows
+        )
+        ledger_rows = self.connection.execute(
+            "SELECT * FROM event_ledger WHERE "
+            "(event_type = 'source.created' AND aggregate_id = ?) OR "
+            "(event_type = 'source_snapshot.created' AND aggregate_id IN ("
+            + snapshots
+            + ")) ORDER BY sequence",
+            (source_id, source_id),
+        )
+        return SourceAuditMaterial(
+            audit_snapshots,
+            tuple(self._ledger_entry(row) for row in ledger_rows),
+        )
+
     def get_claim_authority_for_snapshot(
         self,
         snapshot_id: str,
@@ -1378,4 +1483,5 @@ __all__ = [
     "ProvenanceRecord",
     "ReadOnlyProject",
     "SnapshotMetadata",
+    "SourceAuditMaterial",
 ]

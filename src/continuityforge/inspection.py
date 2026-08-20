@@ -27,6 +27,7 @@ from .readonly import (
     ProvenanceRecord,
     ReadOnlyProject,
 )
+from .source_integrity import replay_source_audit
 
 
 MAX_SOURCE_REVISIONS = 10_000
@@ -34,6 +35,8 @@ MAX_AFFECTED_EVIDENCE = 10_000
 MAX_REPORT_CANDIDATES = 50_000
 MAX_AUTHORITY_RECORDS = 100_000
 MAX_EVENT_AUDIT_RECORDS = 100_000
+MAX_SOURCE_AUDIT_RECORDS = 100_000
+MAX_SOURCE_AUDIT_MATERIAL_BYTES = 64 * 1024 * 1024
 MAX_INSPECTION_MATERIAL_BYTES = 64 * 1024 * 1024
 MAX_LEDGER_ENTRIES = 250_000
 MAX_LEDGER_PAYLOAD_BYTES = 64 * 1024 * 1024
@@ -457,6 +460,25 @@ class InspectionService:
             max_material_bytes=MAX_INSPECTION_MATERIAL_BYTES,
         )
         self._validate_event_audit(provenance, event_audit)
+        # Source correspondence is independently replayed after the existing
+        # aggregate audit gates.  This preserves their stable failure priority
+        # while still preventing any report from being constructed from a
+        # rewritten Source identity or unattested revision lineage.
+        source_audit_material = self.repository.get_source_audit_for_source(
+            source.source_id,
+            max_records=MAX_SOURCE_AUDIT_RECORDS,
+            max_material_bytes=MAX_SOURCE_AUDIT_MATERIAL_BYTES,
+        )
+        source_audit = replay_source_audit(
+            source,
+            source_audit_material.snapshots,
+            source_audit_material.ledger_entries,
+        )
+        if not source_audit.is_valid:
+            raise InspectionIntegrityError(
+                "SOURCE_AUDIT_INVALID",
+                "Source identity or revision lineage is not backed by complete audit material",
+            )
 
         prepared_target = PreparedImpactTarget(
             snapshot_id=target_snapshot.snapshot_id,

@@ -106,7 +106,9 @@ def test_source_impact_covers_claims_events_and_four_exact_outcomes(
         # global ledger verification, claim authority, and event audit replay
         # all use a fixed query plan.  Aggregate/evidence count never creates
         # N+1 reads.
-        assert len(reads) == 17
+        # Source identity/revision audit adds one bounded stats read plus the
+        # two complete, content-free material reads to the fixed query plan.
+        assert len(reads) == 20
         assert len([sql for sql in reads if sql.startswith("SELECT ss.*")]) == 1
         assert (
             len(

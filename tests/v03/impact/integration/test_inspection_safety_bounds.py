@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import json
 import sqlite3
 from pathlib import Path
 
@@ -61,6 +62,53 @@ def _project(
 
 def _drop_trigger(connection: sqlite3.Connection, name: str) -> None:
     connection.execute(f'DROP TRIGGER IF EXISTS "{name}"')
+
+
+def _rewrite_source_key_and_rehash_ledger(
+    database: Path, source_id: str, value: str
+) -> None:
+    """Model a database-owner rewrite while keeping every audit input coherent."""
+
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    _drop_trigger(connection, "continuityforge_sources_identity_immutable")
+    _drop_trigger(connection, "continuityforge_ledger_no_update")
+    connection.execute(
+        "UPDATE sources SET source_key = ? WHERE source_id = ?", (value, source_id)
+    )
+    previous_hash = "0" * 64
+    rows = connection.execute("SELECT * FROM event_ledger ORDER BY sequence").fetchall()
+    for row in rows:
+        payload = json.loads(str(row["payload_json"]))
+        if (
+            row["event_type"] == "source.created"
+            and row["aggregate_id"] == source_id
+        ) or (
+            row["event_type"] == "source_snapshot.created"
+            and payload.get("source_id") == source_id
+        ):
+            payload["source_key"] = value
+        payload_json = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        entry_hash = Storage._ledger_digest(
+            sequence=int(row["sequence"]),
+            entry_id=str(row["entry_id"]),
+            event_type=str(row["event_type"]),
+            aggregate_type=str(row["aggregate_type"]),
+            aggregate_id=str(row["aggregate_id"]),
+            payload_json=payload_json,
+            previous_hash=previous_hash,
+            created_at=str(row["created_at"]),
+        )
+        connection.execute(
+            "UPDATE event_ledger SET payload_json = ?, previous_hash = ?, "
+            "entry_hash = ? WHERE sequence = ?",
+            (payload_json, previous_hash, entry_hash, int(row["sequence"])),
+        )
+        previous_hash = entry_hash
+    connection.commit()
+    connection.close()
 
 
 def test_lineage_uses_metadata_only_and_revision_limit_is_exact(
@@ -286,10 +334,7 @@ def test_untrusted_source_metadata_never_reaches_success_report(
     database = tmp_path / "metadata.db"
     source_id, _ = _project(database)
     with ReadOnlyProject.open(database) as project:
-        writer = sqlite3.connect(database)
-        writer.execute("UPDATE sources SET source_key = ?", (value,))
-        writer.commit()
-        writer.close()
+        _rewrite_source_key_and_rehash_ledger(database, source_id, value)
         with pytest.raises((InspectionIntegrityError, InspectionLimitError)) as caught:
             InspectionService(project).source_impact(
                 source_id, continuity="alpha", from_version=1, to_version=2

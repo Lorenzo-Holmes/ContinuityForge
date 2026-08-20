@@ -51,6 +51,7 @@ from .models import (
 )
 from .timeutil import isoformat_utc, validate_interval
 from .schema import SchemaKind, fingerprint_schema, validate_schema
+from .source_integrity import SourceAuditSnapshot, validate_source_audits
 
 
 GENESIS_HASH = "0" * 64
@@ -401,6 +402,7 @@ class Storage:
 
                 claims = self.list_claim_proposals()
                 events = self.list_narrative_events()
+                source_reports = validate_source_audits(self)
                 claim_reports = validate_claim_authorities(self, claims)
                 event_reports = validate_event_audits(self, events)
                 evidence_validator = EvidenceValidator(self)
@@ -416,9 +418,12 @@ class Storage:
                     ).is_valid
                     for event in events
                 )
-                if any(not report.is_valid for report in claim_reports.values()) or any(
-                    not report.is_valid for report in event_reports.values()
-                ) or not evidence_valid:
+                if (
+                    any(not report.is_valid for report in source_reports.values())
+                    or any(not report.is_valid for report in claim_reports.values())
+                    or any(not report.is_valid for report in event_reports.values())
+                    or not evidence_valid
+                ):
                     raise LedgerIntegrityError(
                         "migrated domain rows failed authority/audit replay before commit"
                     )
@@ -585,6 +590,7 @@ class Storage:
                 retained_table = None
             self._create_schema_v2(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            source_audit_entries = self._backfill_source_audit_ledger(connection)
             self._backfill_claim_authority_ledger(connection)
             self._backfill_event_audit_ledger(connection)
             if removed_hash_constraint:
@@ -618,6 +624,7 @@ class Storage:
                     "from_schema_version": 2,
                     "to_schema_version": SCHEMA_VERSION,
                     "authority_ledger_backfill": True,
+                    "source_audit_ledger_entries": source_audit_entries,
                 },
             )
             self._install_v3_triggers(connection)
@@ -639,6 +646,14 @@ class Storage:
         if source_kind is SchemaKind.V01:
             tables = self._table_names(connection)
             self._migrate_legacy_v1(connection, tables, 1)
+            self._backfill_source_audit_ledger(connection)
+            self._install_v3_triggers(connection)
+            return
+
+        if source_kind is SchemaKind.V03_ALPHA2:
+            # Same-version hardening is deliberately structure-only.  Preflight
+            # requires complete, matching Source audit material; this edge must
+            # neither repair it nor append to/change the existing ledger head.
             self._install_v3_triggers(connection)
             return
 
@@ -1081,6 +1096,38 @@ class Storage:
             DROP TRIGGER IF EXISTS continuityforge_snapshot_lineage_insert;
             DROP TRIGGER IF EXISTS continuityforge_evidence_continuity_insert;
             DROP TRIGGER IF EXISTS continuityforge_event_evidence_continuity_insert;
+            DROP TRIGGER IF EXISTS continuityforge_sources_identity_immutable;
+            DROP TRIGGER IF EXISTS continuityforge_sources_updated_at_guard;
+            DROP TRIGGER IF EXISTS continuityforge_sources_no_delete;
+
+            CREATE TRIGGER continuityforge_sources_identity_immutable
+            BEFORE UPDATE ON sources
+            WHEN OLD.source_id IS NOT NEW.source_id
+              OR OLD.source_key IS NOT NEW.source_key
+              OR OLD.continuity IS NOT NEW.continuity
+              OR OLD.created_at IS NOT NEW.created_at
+            BEGIN
+                SELECT RAISE(ABORT, 'Source identity is immutable');
+            END;
+
+            CREATE TRIGGER continuityforge_sources_updated_at_guard
+            BEFORE UPDATE OF updated_at ON sources
+            WHEN OLD.updated_at IS NOT NEW.updated_at
+              AND NEW.updated_at IS NOT (
+                  SELECT ss.created_at
+                  FROM source_snapshots ss
+                  WHERE ss.source_id = OLD.source_id
+                  ORDER BY ss.version DESC
+                  LIMIT 1
+              )
+            BEGIN
+                SELECT RAISE(ABORT, 'Source updated_at must equal latest SourceSnapshot created_at');
+            END;
+
+            CREATE TRIGGER continuityforge_sources_no_delete
+            BEFORE DELETE ON sources BEGIN
+                SELECT RAISE(ABORT, 'Source rows cannot be deleted');
+            END;
 
             CREATE TRIGGER continuityforge_claims_insert_proposed
             BEFORE INSERT ON claim_proposals
@@ -1359,6 +1406,98 @@ class Storage:
                 created_at=str(event["created_at"]),
             )
             count += 1
+        return count
+
+    def _backfill_source_audit_ledger(self, connection: sqlite3.Connection) -> int:
+        """Backfill only legacy-eligible gaps in Source creation correspondence.
+
+        A normal Source stream is already complete and remains untouched.  A
+        wholly absent stream (the historical legacy shape) can be reconstructed
+        deterministically from immutable rows.  Every partial shape fails
+        closed instead of mixing reconstructed history with extant audit data.
+        """
+
+        count = 0
+        sources = connection.execute(
+            "SELECT * FROM sources ORDER BY created_at, source_id"
+        ).fetchall()
+        for source in sources:
+            source_id = str(source["source_id"])
+            snapshots = connection.execute(
+                "SELECT * FROM source_snapshots WHERE source_id = ? "
+                "ORDER BY version, snapshot_id",
+                (source_id,),
+            ).fetchall()
+            source_entries = connection.execute(
+                "SELECT * FROM event_ledger WHERE event_type = 'source.created' "
+                "AND aggregate_type = 'source' AND aggregate_id = ? ORDER BY sequence",
+                (source_id,),
+            ).fetchall()
+            if len(source_entries) > 1:
+                raise LedgerIntegrityError(
+                    f"Source {source_id} has duplicate source.created entries"
+                )
+            snapshot_entries = connection.execute(
+                "SELECT * FROM event_ledger WHERE event_type = 'source_snapshot.created' "
+                "AND aggregate_type = 'source_snapshot' AND aggregate_id IN "
+                "(SELECT snapshot_id FROM source_snapshots WHERE source_id = ?) "
+                "ORDER BY sequence",
+                (source_id,),
+            ).fetchall()
+            by_snapshot: dict[str, list[sqlite3.Row]] = {}
+            for entry in snapshot_entries:
+                by_snapshot.setdefault(str(entry["aggregate_id"]), []).append(entry)
+            if any(len(items) != 1 for items in by_snapshot.values()):
+                raise LedgerIntegrityError(
+                    f"Source {source_id} has duplicate SourceSnapshot audit entries"
+                )
+
+            missing = [
+                snapshot
+                for snapshot in snapshots
+                if str(snapshot["snapshot_id"]) not in by_snapshot
+            ]
+            if (source_entries and missing) or (not source_entries and by_snapshot):
+                raise LedgerIntegrityError(
+                    f"Source {source_id} has a partial Source audit stream"
+                )
+
+            if not source_entries:
+                self._append_ledger_in_transaction(
+                    connection,
+                    event_type="source.created",
+                    aggregate_type="source",
+                    aggregate_id=source_id,
+                    payload={
+                        "source_key": str(source["source_key"]),
+                        "continuity": str(source["continuity"]),
+                        "audit_backfill": True,
+                    },
+                    created_at=str(source["created_at"]),
+                )
+                count += 1
+
+            for snapshot in missing:
+                self._append_ledger_in_transaction(
+                    connection,
+                    event_type="source_snapshot.created",
+                    aggregate_type="source_snapshot",
+                    aggregate_id=str(snapshot["snapshot_id"]),
+                    payload={
+                        "source_id": source_id,
+                        "source_key": str(source["source_key"]),
+                        "continuity": str(source["continuity"]),
+                        "version": int(snapshot["version"]),
+                        "content_hash": str(snapshot["content_hash"]),
+                        "previous_snapshot_id": snapshot["previous_snapshot_id"],
+                        "media_type": str(snapshot["media_type"]),
+                        "origin_path": snapshot["origin_path"],
+                        "line_count": int(snapshot["line_count"]),
+                        "audit_backfill": True,
+                    },
+                    created_at=str(snapshot["created_at"]),
+                )
+                count += 1
         return count
 
     def _migrate_legacy_v1(
@@ -2253,6 +2392,29 @@ class Storage:
         sql += " ORDER BY s.source_key, s.continuity, ss.version"
         rows = self.connection.execute(sql, params).fetchall()
         return [self._row_to_snapshot(row) for row in rows]
+
+    def list_source_audit_snapshots(self) -> list[SourceAuditSnapshot]:
+        """Bulk-load content-free snapshot material for Source audit replay."""
+
+        rows = self.connection.execute(
+            "SELECT snapshot_id, source_id, version, content_hash, media_type, "
+            "origin_path, previous_snapshot_id, line_count, created_at "
+            "FROM source_snapshots ORDER BY source_id, version, snapshot_id"
+        ).fetchall()
+        return [
+            SourceAuditSnapshot(
+                snapshot_id=str(row["snapshot_id"]),
+                source_id=str(row["source_id"]),
+                version=int(row["version"]),
+                content_hash=str(row["content_hash"]),
+                media_type=str(row["media_type"]),
+                origin_path=row["origin_path"],
+                previous_snapshot_id=row["previous_snapshot_id"],
+                line_count=int(row["line_count"]),
+                created_at=str(row["created_at"]),
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Claim proposals, evidence, and explicit governance

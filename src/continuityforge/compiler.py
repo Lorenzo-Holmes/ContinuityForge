@@ -23,10 +23,16 @@ from .models import (
     SourceSnapshot,
 )
 from .serialization import write_json
+from .source_integrity import (
+    SourceAuditIssue,
+    SourceAuditReport,
+    SourceAuditStorage,
+    validate_source_audits,
+)
 from .timeutil import contains_instant, isoformat_utc
 
 
-class CompilerStorage(AuthorityStorage, EventAuditStorage, Protocol):
+class CompilerStorage(AuthorityStorage, EventAuditStorage, SourceAuditStorage, Protocol):
     def list_claim_proposals(
         self,
         *,
@@ -139,6 +145,7 @@ class MemoryCompiler:
         allowed.discard(AccessPolicy.HIDDEN)
         diagnostics: list[CompilationDiagnostic] = []
         compiled_claims: list[dict[str, Any]] = []
+        source_audits = validate_source_audits(self.storage)
 
         claims = self.storage.list_claim_proposals(
             persona_id=cutoff.persona_id,
@@ -193,6 +200,17 @@ class MemoryCompiler:
                 continue
 
             refs = self.storage.get_claim_evidence(claim.claim_id)
+            source_audit = self._invalid_source_audit(refs, source_audits)
+            if source_audit is not None:
+                diagnostics.append(
+                    CompilationDiagnostic(
+                        "SOURCE_AUDIT_INVALID",
+                        claim.claim_id,
+                        "claim provenance Source failed deterministic audit replay",
+                        source_audit.to_dict(),
+                    )
+                )
+                continue
             evidence_report = self.evidence.validate_claim(claim, refs)
             if not evidence_report.is_valid:
                 diagnostics.append(
@@ -213,7 +231,9 @@ class MemoryCompiler:
                 item["id"],
             )
         )
-        compiled_events = self._compile_events(cutoff, allowed, diagnostics)
+        compiled_events = self._compile_events(
+            cutoff, allowed, diagnostics, source_audits
+        )
 
         return {
             "schema": PACKAGE_SCHEMA,
@@ -306,6 +326,7 @@ class MemoryCompiler:
         cutoff: MemoryCutoff,
         allowed: set[AccessPolicy],
         diagnostics: list[CompilationDiagnostic],
+        source_audits: dict[str, SourceAuditReport],
     ) -> list[dict[str, Any]]:
         try:
             events = self.storage.list_narrative_events(
@@ -345,6 +366,17 @@ class MemoryCompiler:
                 refs = self.storage.get_event_evidence(event.event_id)
             except AttributeError:
                 refs = []
+            source_audit = self._invalid_source_audit(refs, source_audits)
+            if source_audit is not None:
+                diagnostics.append(
+                    CompilationDiagnostic(
+                        "SOURCE_AUDIT_INVALID",
+                        event.event_id,
+                        "event provenance Source failed deterministic audit replay",
+                        source_audit.to_dict(),
+                    )
+                )
+                continue
             evidence_report = self.evidence.validate_claim(event, refs)
             if not evidence_report.is_valid:
                 diagnostics.append(
@@ -375,6 +407,29 @@ class MemoryCompiler:
             )
         result.sort(key=lambda item: (item.get("valid_from") or "", item["id"]))
         return result
+
+    def _invalid_source_audit(
+        self,
+        refs: list[EvidenceRef],
+        reports: dict[str, SourceAuditReport],
+    ) -> SourceAuditReport | None:
+        for ref in refs:
+            source_id = self.storage.get_snapshot(ref.snapshot_id).source_id
+            report = reports.get(source_id)
+            if report is None or not report.is_valid:
+                return report or SourceAuditReport(
+                    source_id=source_id,
+                    snapshot_count=0,
+                    source_creation_entry_count=0,
+                    snapshot_creation_entry_count=0,
+                    issues=(
+                        SourceAuditIssue(
+                            "SOURCE_AUDIT_DATA_UNAVAILABLE",
+                            "Source audit report is missing for cited provenance",
+                        ),
+                    ),
+                )
+        return None
 
 
 __all__ = ["CompilationDiagnostic", "CompilerStorage", "MemoryCompiler"]

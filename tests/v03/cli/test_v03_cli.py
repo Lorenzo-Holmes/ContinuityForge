@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from hashlib import sha256
 import json
 import sqlite3
@@ -19,6 +20,68 @@ def _captured_json(capsys, *, stderr: bool = False):
 
 def _digest(path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _rewrite_source_key_with_coherent_audit(
+    database, source_id: str, source_key: str
+) -> None:
+    """Keep the schema and internal ledger coherent for metadata-boundary QA."""
+
+    with closing(sqlite3.connect(database)) as connection:
+        connection.row_factory = sqlite3.Row
+        names = (
+            "continuityforge_sources_identity_immutable",
+            "continuityforge_ledger_no_update",
+        )
+        placeholders = ",".join("?" for _ in names)
+        triggers = connection.execute(
+            f"SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+            f"AND name IN ({placeholders}) ORDER BY name",
+            names,
+        ).fetchall()
+        assert len(triggers) == len(names)
+        for trigger in triggers:
+            connection.execute(f'DROP TRIGGER "{trigger["name"]}"')
+        connection.execute(
+            "UPDATE sources SET source_key = ? WHERE source_id = ?",
+            (source_key, source_id),
+        )
+        previous_hash = "0" * 64
+        rows = connection.execute(
+            "SELECT * FROM event_ledger ORDER BY sequence"
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            if (
+                row["event_type"] == "source.created"
+                and row["aggregate_id"] == source_id
+            ) or (
+                row["event_type"] == "source_snapshot.created"
+                and payload.get("source_id") == source_id
+            ):
+                payload["source_key"] = source_key
+            payload_json = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            entry_hash = Storage._ledger_digest(
+                sequence=int(row["sequence"]),
+                entry_id=str(row["entry_id"]),
+                event_type=str(row["event_type"]),
+                aggregate_type=str(row["aggregate_type"]),
+                aggregate_id=str(row["aggregate_id"]),
+                payload_json=payload_json,
+                previous_hash=previous_hash,
+                created_at=str(row["created_at"]),
+            )
+            connection.execute(
+                "UPDATE event_ledger SET payload_json = ?, previous_hash = ?, "
+                "entry_hash = ? WHERE sequence = ?",
+                (payload_json, previous_hash, entry_hash, int(row["sequence"])),
+            )
+            previous_hash = entry_hash
+        for trigger in triggers:
+            connection.execute(str(trigger["sql"]))
+        connection.commit()
 
 
 def _revision_project(path) -> None:
@@ -96,14 +159,13 @@ def test_source_impact_cli_is_read_only_metadata_only_and_report_only(
 def test_source_impact_cli_uses_stable_metadata_injection_error(tmp_path, capsys):
     database = tmp_path / "unsafe-metadata.db"
     _revision_project(database)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         row = connection.execute("SELECT source_id FROM sources").fetchone()
         assert row is not None
         source_id = str(row[0])
-        connection.execute(
-            "UPDATE sources SET source_key = ? WHERE source_id = ?",
-            ("\x1b[31mCANARY", source_id),
-        )
+    _rewrite_source_key_with_coherent_audit(
+        database, source_id, "\x1b[31mCANARY"
+    )
     before = _digest(database)
 
     assert (
@@ -143,9 +205,10 @@ def test_migration_check_accepts_current_v3_without_modifying_file(tmp_path, cap
 
 def test_migration_check_fails_closed_for_unknown_database(tmp_path, capsys):
     database = tmp_path / "foreign.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         connection.execute("CREATE TABLE unrelated (value TEXT)")
         connection.execute("INSERT INTO unrelated VALUES ('preserve me')")
+        connection.commit()
     before = database.read_bytes()
 
     assert main(["--db", str(database), "migration-check"]) == 6
@@ -251,12 +314,13 @@ def test_cli_preflight_then_backup_gated_v01_migration(
     tmp_path, project_root, capsys
 ):
     database = tmp_path / "legacy.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         connection.executescript(
             (project_root / "tests" / "baseline" / "v01_schema.sql").read_text(
                 encoding="utf-8"
             )
         )
+        connection.commit()
     before = _digest(database)
 
     assert main(["--db", str(database), "migration-check"]) == 0
@@ -273,7 +337,7 @@ def test_cli_preflight_then_backup_gated_v01_migration(
     assert migrated["target"]["kind"] == "v0.3"
     backup = migrated["checks"]["backup_path"]
     assert backup is not None
-    with sqlite3.connect(backup) as connection:
+    with closing(sqlite3.connect(backup)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
     with Storage(database) as storage:
         assert storage.get_schema_version() == 3

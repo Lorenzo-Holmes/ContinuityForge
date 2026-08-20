@@ -35,7 +35,9 @@ A stable logical document in one continuity.
 | `continuity` | Exact opaque worldline ID |
 | `created_at`, `updated_at` | UTC audit timestamps |
 
-`(source_key, continuity)` identifies a logical source. The same key can exist independently in another continuity.
+`(source_key, continuity)` identifies a logical source. The same key can exist independently in another continuity. Final v0.3 treats `source_id`, `source_key`, `continuity`, and `created_at` as immutable identity fields and forbids Source deletion. `updated_at` is revision-derived state: it must equal the `created_at` of the latest `SourceSnapshot`.
+
+Each Source has exactly one matching `source.created` ledger entry. Every revision has exactly one matching `source_snapshot.created` entry whose source identity, version, hash, predecessor, media metadata, line count, and timestamp match storage. Source audit replay also requires contiguous versions and predecessor links; validator, compiler, migration, and inspection share this deterministic rule.
 
 ## `SourceSnapshot`
 
@@ -185,6 +187,8 @@ It excludes the quote and complete source body by default and has no authority t
 - schema marker `continuityforge.source-impact/v0.3-alpha` and an always-true `report_only` marker.
 
 `ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the global ledger, affected-claim authority, and complete audit material for every affected event before returning a report. Event-audit divergence fails closed as `EVENT_AUDIT_INVALID` rather than exposing an unaudited event anchor.
+
+The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary final-v0.3 read/write surfaces reject it until the explicit backup-gated migration installs Source integrity triggers. That same-version hardening preserves the EventLedger head and refuses to reconstruct missing Source audit.
 
 `MigrationReport` carries:
 

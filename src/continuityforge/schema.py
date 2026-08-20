@@ -31,6 +31,7 @@ class SchemaKind(str, Enum):
     EMPTY = "empty"
     V01 = "v0.1"
     V02 = "v0.2"
+    V03_ALPHA2 = "v0.3-alpha2"
     V03 = "v0.3"
     UNKNOWN = "unknown"
     PARTIAL = "partial"
@@ -201,7 +202,7 @@ EVENT_EVIDENCE_COLUMNS = frozenset(
 # These triggers are the v0.3 application-integrity boundary.  Classification
 # requires them all; merely changing user_version to 3 cannot bless a partial
 # database.
-V03_REQUIRED_TRIGGERS = frozenset(
+V03_ALPHA2_REQUIRED_TRIGGERS = frozenset(
     {
         "continuityforge_snapshots_no_update",
         "continuityforge_snapshots_no_delete",
@@ -225,6 +226,21 @@ V03_REQUIRED_TRIGGERS = frozenset(
         "continuityforge_evidence_continuity_insert",
         "continuityforge_event_evidence_continuity_insert",
     }
+)
+
+
+V03_REQUIRED_TRIGGERS = V03_ALPHA2_REQUIRED_TRIGGERS | {
+    "continuityforge_sources_identity_immutable",
+    "continuityforge_sources_updated_at_guard",
+    "continuityforge_sources_no_delete",
+}
+
+
+# Exact structural digest shipped by 0.3.0a2.  No broader same-version shape is
+# admitted: an unknown schema-3 database remains PARTIAL and requires operator
+# inspection rather than being silently blessed by the compatibility edge.
+V03_ALPHA2_SCHEMA_DIGEST = (
+    "b0b0314af69f3a4d7051fc28af5bab23ccb5831d0245683b3ad9edc225edc237"
 )
 
 
@@ -287,6 +303,9 @@ CANONICAL_TRIGGER_SQL_DIGESTS: Mapping[str, str] = {
     "continuityforge_snapshot_lineage_insert": "e9324f417a83f9389ca5db4c08faceda8e1125c1f04fb47378896a0beab1e4e9",
     "continuityforge_snapshots_no_delete": "a5556a7a9dd123500d81aabfa01836a1abcdc1c1f9eb57a625b6cf47a6d39b57",
     "continuityforge_snapshots_no_update": "2eaa224c6cee9cd8a91047784f3506ae509707cce42224f701fda39971bc2817",
+    "continuityforge_sources_identity_immutable": "689d34075c559ec9661d5b5a2851ae13be8786eba63cba62b00e5312c4596ed5",
+    "continuityforge_sources_no_delete": "708e83bae6e42e155db40957be94d38985a14143c9cae379e0e4700975d49593",
+    "continuityforge_sources_updated_at_guard": "b01633d661b984268e21c4e05b335d3737a0b5cdc857ddf7a25e2c5854de1c8b",
 }
 
 CANONICAL_INDEX_SQL_DIGESTS: Mapping[str, str] = {
@@ -307,6 +326,7 @@ ALLOWED_MIGRATIONS = frozenset(
     {
         (SchemaKind.V01, SchemaKind.V03),
         (SchemaKind.V02, SchemaKind.V03),
+        (SchemaKind.V03_ALPHA2, SchemaKind.V03),
     }
 )
 
@@ -510,6 +530,7 @@ def _classify(
     objects: list[tuple[str, str, str, str]],
     user_version: int,
     metadata_version: int | None,
+    structural_digest: str,
 ) -> SchemaKind:
     tables = {name for type_, name, _, _ in objects if type_ == "table"}
     triggers = {name for type_, name, _, _ in objects if type_ == "trigger"}
@@ -543,6 +564,22 @@ def _classify(
                 )
             ):
                 return SchemaKind.V03
+            if (
+                structural_digest == V03_ALPHA2_SCHEMA_DIGEST
+                and has_event_evidence
+                and _has_only_known_tables(tables, allow_event_evidence=True)
+                and triggers == V03_ALPHA2_REQUIRED_TRIGGERS
+                and not views
+                and _has_canonical_sql(
+                    objects,
+                    tables=tables,
+                    triggers=triggers,
+                    indexes=indexes,
+                    allow_v02_snapshot_hash_unique=False,
+                    allow_event_evidence=True,
+                )
+            ):
+                return SchemaKind.V03_ALPHA2
             return SchemaKind.PARTIAL
         if user_version == 2 and metadata_version == 2:
             # v0.2 had one short-lived layout before event evidence was added;
@@ -599,12 +636,6 @@ def fingerprint_schema(connection: sqlite3.Connection) -> SchemaFingerprint:
     user_version = int(row[0]) if row else 0
     tables_set = {name for type_, name, _, _ in objects if type_ == "table"}
     metadata_version = _metadata_version(connection, tables_set)
-    kind = _classify(
-        connection,
-        objects=objects,
-        user_version=user_version,
-        metadata_version=metadata_version,
-    )
     material = json.dumps(
         {
             "user_version": user_version,
@@ -615,9 +646,17 @@ def fingerprint_schema(connection: sqlite3.Connection) -> SchemaFingerprint:
         sort_keys=True,
         separators=(",", ":"),
     )
+    structural_digest = sha256(material.encode("utf-8")).hexdigest()
+    kind = _classify(
+        connection,
+        objects=objects,
+        user_version=user_version,
+        metadata_version=metadata_version,
+        structural_digest=structural_digest,
+    )
     return SchemaFingerprint(
         kind=kind,
-        digest=sha256(material.encode("utf-8")).hexdigest(),
+        digest=structural_digest,
         user_version=user_version,
         metadata_version=metadata_version,
         tables=tuple(sorted(tables_set)),
@@ -679,6 +718,8 @@ __all__ = [
     "SchemaKind",
     "V01_TABLE_COLUMNS",
     "V02_REQUIRED_TRIGGERS",
+    "V03_ALPHA2_REQUIRED_TRIGGERS",
+    "V03_ALPHA2_SCHEMA_DIGEST",
     "V03_REQUIRED_TRIGGERS",
     "V2_CORE_TABLE_COLUMNS",
     "classify_schema",

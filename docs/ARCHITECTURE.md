@@ -69,9 +69,11 @@ The Impact engine accepts an old `EvidenceRef` value and an already-resolved tar
 
 Because `EvidenceRef` does not carry logical-source lineage, this two-value engine does not prove that the target belongs to the same source or continuity. A storage-aware inspection service must establish that boundary first.
 
-### Governance and authority integrity
+### Governance, authority, and Source integrity
 
 Governance records explicit status transitions. Authorization rechecks evidence and deterministic conflicts. v0.3 authority integrity verifies that an `AUTHORIZED` materialized status is backed by a complete decision, evidence-set, and ledger chain before compilation. Operator-authored `NarrativeEvent` rows and their complete evidence sets are likewise bound to exactly one creation ledger record. Compiler, validator, and impact inspection replay the same event-audit rule before trusting an event.
+
+`source_integrity.py` independently binds every logical Source and its complete revision lineage to `source.created` and `source_snapshot.created`. It is a pure deterministic replay shared by validator, compiler, migration, and read-only inspection; it neither reads SQLite directly nor repairs history.
 
 ### SQLite storage
 
@@ -122,7 +124,7 @@ sequenceDiagram
 
     C->>IS: old evidence + target version request
     IS->>S: resolve endpoint bodies + lineage metadata
-    IS->>IS: verify hashes, line counts, lineage, ledger, claim authority, event audit
+    IS->>IS: verify hashes, line counts, lineage, ledger, Source audit, claim authority, event audit
     IS->>EV: revalidate old evidence against old snapshot
     IS->>IM: evidence + resolved target snapshot
     IM-->>IS: frozen exact-match report
@@ -136,6 +138,9 @@ Impact is report-only. The inspection path has no authority to change claim stat
 | Invariant | Enforced by |
 |---|---|
 | A snapshot's content and version identity do not mutate | Storage transactions and immutable-row triggers |
+| A Source's ID, key, continuity, and creation time do not mutate | Final-v0.3 Source identity trigger and deterministic Source audit replay |
+| A Source row cannot be deleted | Final-v0.3 Source no-delete trigger |
+| `Source.updated_at` equals its latest snapshot creation time | Guarded update trigger and Source audit replay |
 | Evidence lines are built-in integers, 1-based, inclusive | Evidence domain validation |
 | Evidence and claim continuity match exactly | Evidence validation |
 | LLM output cannot set authoritative status | Governance proposal boundary |
@@ -143,6 +148,7 @@ Impact is report-only. The inspection path has no authority to change claim stat
 | Materialized authority has decision/evidence/ledger backing | v0.3 authority integrity |
 | Operator event and evidence have one matching audit record | v0.3 event integrity |
 | Compiler, validator, and inspection agree on event-audit validity | Shared deterministic event-audit replay |
+| Compiler, validator, and inspection agree on Source-audit validity | Shared deterministic Source-audit replay |
 | One compile/inspection never mixes concurrent database states | Pinned read transactions |
 | `human_only` does not enter default agent packs | Compiler access filter |
 | Future knowledge does not enter an earlier cutoff | Compiler knowledge-time filter |

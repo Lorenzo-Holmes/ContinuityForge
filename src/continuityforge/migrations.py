@@ -27,11 +27,16 @@ from .constants import SCHEMA_VERSION
 from .evidence import quote_sha256
 from .exceptions import MigrationError
 from .ingest import SourceInputError, extract_line_quote, parse_json_content, source_lines
+from .models import LedgerEntry, Source
 from .schema import (
     ALLOWED_MIGRATIONS,
     SchemaFingerprint,
     SchemaKind,
     fingerprint_schema,
+)
+from .source_integrity import (
+    SourceAuditSnapshot,
+    replay_source_audits,
 )
 from .timeutil import parse_instant
 
@@ -1778,6 +1783,89 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
     return issues
 
 
+def _validate_v03_alpha2_source_audit(
+    connection: sqlite3.Connection,
+) -> list[MigrationIssue]:
+    """Require complete Source audit before the same-version hardening edge."""
+
+    issues: list[MigrationIssue] = []
+    try:
+        sources = [
+            Source(
+                source_id=str(row["source_id"]),
+                source_key=str(row["source_key"]),
+                continuity=str(row["continuity"]),
+                created_at=str(row["created_at"]),
+                updated_at=str(row["updated_at"]),
+            )
+            for row in _rows(connection, "sources")
+        ]
+        snapshots = [
+            SourceAuditSnapshot(
+                snapshot_id=str(row["snapshot_id"]),
+                source_id=str(row["source_id"]),
+                version=int(row["version"]),
+                content_hash=str(row["content_hash"]),
+                media_type=str(row["media_type"]),
+                origin_path=row.get("origin_path"),
+                previous_snapshot_id=row.get("previous_snapshot_id"),
+                line_count=int(row["line_count"]),
+                created_at=str(row["created_at"]),
+            )
+            for row in _rows(connection, "source_snapshots")
+        ]
+        entries: list[LedgerEntry] = []
+        for row in _rows(connection, "event_ledger"):
+            if row.get("event_type") not in {
+                "source.created",
+                "source_snapshot.created",
+            }:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json")))
+            except (TypeError, ValueError):
+                payload = {"malformed": True}
+            if not isinstance(payload, Mapping):
+                payload = {"malformed": True}
+            entries.append(
+                LedgerEntry(
+                    sequence=int(row["sequence"]),
+                    entry_id=str(row["entry_id"]),
+                    event_type=str(row["event_type"]),
+                    aggregate_type=str(row["aggregate_type"]),
+                    aggregate_id=str(row["aggregate_id"]),
+                    payload=payload,
+                    previous_hash=str(row["previous_hash"]),
+                    entry_hash=str(row["entry_hash"]),
+                    created_at=str(row["created_at"]),
+                )
+            )
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        return [
+            MigrationIssue(
+                "MIGRATION_SOURCE_AUDIT_INVALID",
+                "v0.3.0a2 Source audit material is malformed",
+                table="sources",
+                actual={"error_type": type(exc).__name__},
+            )
+        ]
+
+    reports = replay_source_audits(sources, snapshots, entries)
+    for source_id, report in reports.items():
+        if report.is_valid:
+            continue
+        issues.append(
+            MigrationIssue(
+                "MIGRATION_SOURCE_AUDIT_INVALID",
+                "v0.3.0a2 Source identity or revisions do not match EventLedger",
+                table="sources",
+                record_id=source_id,
+                actual={"issue_codes": [item.code for item in report.issues]},
+            )
+        )
+    return issues
+
+
 def validate_migration_data(
     connection: sqlite3.Connection, kind: SchemaKind
 ) -> tuple[MigrationIssue, ...]:
@@ -1787,6 +1875,10 @@ def validate_migration_data(
         return tuple(_validate_v01(connection))
     if kind is SchemaKind.V02:
         return tuple(_validate_v02(connection))
+    if kind is SchemaKind.V03_ALPHA2:
+        issues = _validate_v02(connection)
+        issues.extend(_validate_v03_alpha2_source_audit(connection))
+        return tuple(issues)
     return ()
 
 
@@ -2026,7 +2118,11 @@ def preflight_migration(
             )
 
         total_rows = 0
-        if source.kind in {SchemaKind.V01, SchemaKind.V02}:
+        if source.kind in {
+            SchemaKind.V01,
+            SchemaKind.V02,
+            SchemaKind.V03_ALPHA2,
+        }:
             for table in source.tables:
                 escaped = '"' + table.replace('"', '""') + '"'
                 count = int(connection.execute(f"SELECT COUNT(*) FROM {escaped}").fetchone()[0])
@@ -2077,7 +2173,11 @@ def preflight_migration(
                 )
 
         quarantined: set[tuple[str, str]] = set()
-        if source.kind in {SchemaKind.V01, SchemaKind.V02} and not resource_limited:
+        if source.kind in {
+            SchemaKind.V01,
+            SchemaKind.V02,
+            SchemaKind.V03_ALPHA2,
+        } and not resource_limited:
             data_issues = list(validate_migration_data(connection, source.kind))
             if selected_mode is MigrationMode.QUARANTINE and source.kind is SchemaKind.V01:
                 for issue in data_issues:
@@ -2164,7 +2264,7 @@ def preflight_migration(
         if (
             create_backup
             and path is not None
-            and source.kind in {SchemaKind.V01, SchemaKind.V02}
+            and source.kind in {SchemaKind.V01, SchemaKind.V02, SchemaKind.V03_ALPHA2}
             and report.is_ready
         ):
             backup_path: Path | None = None

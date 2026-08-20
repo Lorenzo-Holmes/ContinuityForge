@@ -20,6 +20,7 @@ from .models import (
     SourceSnapshot,
 )
 from .timeutil import validate_interval
+from .source_integrity import SourceAuditStorage, validate_source_audits
 
 
 class Severity(str, Enum):
@@ -72,7 +73,9 @@ class ProjectValidationReport:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
 
-class ValidationStorage(AuthorityStorage, EventAuditStorage, Protocol):
+class ValidationStorage(
+    AuthorityStorage, EventAuditStorage, SourceAuditStorage, Protocol
+):
     def list_claim_proposals(
         self,
         *,
@@ -266,6 +269,19 @@ class ProjectValidator:
         except AttributeError:
             return []
         result: list[ProjectIssue] = []
+        source_audits = validate_source_audits(self.storage)
+        for source_id, audit in source_audits.items():
+            for audit_issue in audit.issues:
+                result.append(
+                    ProjectIssue(
+                        audit_issue.code,
+                        Severity.ERROR,
+                        audit_issue.message,
+                        "source",
+                        source_id,
+                        dict(audit_issue.details),
+                    )
+                )
         for source in sources:
             snapshots = sorted(
                 self.storage.list_snapshots(source.source_id), key=lambda item: item.version

@@ -2,7 +2,7 @@
 
 ## Status
 
-Schema version 3, strict structural fingerprinting, read-only preflight, verified backup creation, transactional migration, and functional v0.1 quarantine are **implemented in the unreleased v0.3.0a2 development tree**. The commands and report schema remain pre-release interfaces.
+Schema version 3, strict structural fingerprinting, read-only preflight, verified backup creation, transactional migration, Source-audit hardening, and functional v0.1 quarantine are **implemented in the unreleased v0.3 development tree**. The commands and report schema remain pre-release interfaces.
 
 ```bash
 # Existing database; performs checks only and creates no backup.
@@ -12,7 +12,9 @@ continuityforge --db project.db migration-check --mode strict
 continuityforge --db project.db migrate --mode strict
 ```
 
-Both commands accept `--mode strict|quarantine`. `migrate` refuses a missing database instead of silently creating one. Ordinary read/write commands do not migrate: a recognized v0.1/v0.2 target must pass through the explicit `migration-check` and `migrate` lifecycle.
+Both commands accept `--mode strict|quarantine`. `migrate` refuses a missing database instead of silently creating one. Ordinary read/write commands do not migrate: a recognized v0.1/v0.2 target or the exact v0.3.0a2 schema must pass through the explicit `migration-check` and `migrate` lifecycle.
+
+The v0.3.0a2 compatibility edge is deliberately narrow. It recognizes only structural digest `b0b0314af69f3a4d7051fc28af5bab23ccb5831d0245683b3ad9edc225edc237`, requires a complete matching Source/SourceSnapshot audit before backup, and then installs the final Source triggers. It never backfills Source audit, appends `schema.migrated`, or otherwise changes the EventLedger head. An unknown schema-version-3 shape remains `PARTIAL`.
 
 The alpha admits only the byte-locked, canonical v0.1 schema and canonical supported v0.2 layouts. A v0.1 database with extra alias tables, columns, weakened constraints, indexes, triggers, or views is classified `PARTIAL` and fails closed in both modes; it is not guessed into an active mapping.
 
@@ -61,6 +63,7 @@ flowchart LR
 - detected schema version and supported migration path;
 - SQLite integrity and foreign-key findings;
 - EventLedger verification result where present;
+- Source identity, revision lineage, `updated_at`, and creation-ledger correspondence;
 - snapshot/version chain integrity;
 - evidence coordinate, quote/hash, and continuity findings;
 - governance status, decision-history, and authority-chain findings;
@@ -76,7 +79,7 @@ The library function is `preflight_migration(database, mode=..., create_backup=.
 
 ## Backup gate
 
-`migrate` and `migrate_to_v3(...)` admit a v0.1/v0.2 write migration only after creating a consistent SQLite backup, hashing it, opening it independently, verifying `quick_check` and foreign keys, and confirming that both its structural fingerprint and streamed logical-database digest match the locked source connection. Copying only the main database file while a WAL database is live is not sufficient.
+`migrate` and `migrate_to_v3(...)` admit a v0.1/v0.2 or exact v0.3.0a2 write migration only after creating a consistent SQLite backup, hashing it, opening it independently, verifying `quick_check` and foreign keys, and confirming that both its structural fingerprint and streamed logical-database digest match the locked source connection. Copying only the main database file while a WAL database is live is not sufficient.
 
 The backup is first written to an unpredictable same-directory private temporary file. Its identity, regular-file type, and—on POSIX—`0600` mode are checked before and after verification. Publication never replaces an existing path; numbered regular-file destinations are preserved, while a symbolic-link candidate or an identity change fails closed. The migration begins only after the verified artifact has been flushed and published.
 
@@ -211,9 +214,12 @@ At minimum:
 5. evidence and continuity validation;
 6. governance authority-chain verification;
 7. EventLedger verification;
-8. baseline v0.1 and v0.2 regression suites;
-9. representative Memory Pack equivalence;
-10. backup restoration drill.
+8. deterministic Source audit replay on every Source and revision;
+9. baseline v0.1 and v0.2 regression suites;
+10. representative Memory Pack equivalence;
+11. backup restoration drill.
+
+Canonical v0.1/v0.2 migrations may create deterministic Source creation audit entries only when that Source's entire historical audit stream is absent. A partial stream is corruption and is never completed silently. The v0.3.0a2-to-final-v0.3 edge permits no audit backfill at all.
 
 ## Failure and recovery
 

@@ -60,6 +60,8 @@ An attacker able to replace the entire database and its internal ledger is out o
 | Source revision silently invalidates memory | Deterministic report-only impact inspection | Human review is required; no automatic dispute transition |
 | Duplicate text creates false relocation certainty | `EXACT_MOVED_AMBIGUOUS` with all sorted candidates | Human must choose or reject a candidate |
 | Materialized status or event lacks audit backing | Shared claim-authority/event replay across compiler, validator, and inspection | Full DB replacement by trusted owner is not detected |
+| Source key/continuity is rewritten after evidence was created | Immutable identity/no-delete triggers plus shared Source audit replay | A trusted owner can replace and consistently rehash the entire database |
+| Source revision metadata is detached from audit history | Snapshot immutability, lineage triggers, exact creation-payload replay, and `updated_at == latest snapshot.created_at` | Internal hashes are not externally anchored |
 | Ordinary command silently migrates or creates a target | Explicit per-command database lifecycle and existing-file checks | A trusted operator can still invoke `migrate` intentionally |
 | Partial migration | Preflight, backup gate, one transaction, post-verification | Disk or hardware failure may require external recovery |
 | Unsafe live DB copy | SQLite backup API / consistent snapshot requirement | External tools can still make unsafe copies |
@@ -89,6 +91,8 @@ The pure Impact API validates whether the supplied evidence fields form a usable
 
 The inspection service also recomputes both endpoint snapshot hashes and line counts, verifies the global EventLedger, replays authority for every affected claim and the complete creation audit for every affected event, validates report metadata, and performs all reads in one pinned transaction. Event divergence fails closed with `EVENT_AUDIT_INVALID`. It reads only the two endpoint bodies; intermediate revisions are lineage metadata.
 
+The same inspection boundary replays the selected Source and every revision against `source.created` and `source_snapshot.created`. Validator and Memory compiler use the same pure replay. A Source identity/payload, timestamp, lineage, or `updated_at` mismatch fails closed; compilation excludes every aggregate citing that Source.
+
 Impact outcomes never mutate governance. `EXACT_MOVED_UNIQUE` is not authorization; it is only one exact relocation candidate.
 
 ## Governance and ledger attack surface
@@ -113,6 +117,8 @@ Schema-v3 migration follows these principles:
 6. emit a machine-readable, source-body-redacted report;
 7. verify schema, ledger, counts, and fingerprints before activation;
 8. retain the backup until a restoration drill succeeds.
+
+The exact v0.3.0a2 structural fingerprint has a same-version hardening edge to final v0.3. Preflight rejects missing or divergent Source audit before publishing a backup. A successful hardening installs only the Source identity, `updated_at`, and no-delete triggers and preserves the existing EventLedger head.
 
 The implementation writes to an unpredictable same-directory temporary regular file, tracks its identity, enforces POSIX mode `0600`, verifies identity before writing, compares a streamed logical digest with the locked source connection, flushes the artifact, then publishes without replacing an existing destination. Existing regular backups are preserved through numbered names; symbolic-link candidates fail closed. These controls prevent accidental overwrite and common path-substitution mistakes inside the stated trusted-owner boundary, but they are not encryption or a defense against a malicious operating-system account.
 
