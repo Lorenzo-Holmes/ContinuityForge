@@ -44,7 +44,7 @@ Changelog = "https://github.com/Lorenzo-Holmes/ContinuityForge/blob/main/CHANGEL
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8,<9",
+  "pytest>=8,<10",
   "pytest-cov>=6,<8",
   "build>=1.2,<2",
   "jsonschema>=4,<5",
