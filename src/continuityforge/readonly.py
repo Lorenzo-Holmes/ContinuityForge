@@ -979,7 +979,7 @@ class ReadOnlyProject:
             raise ValueError("max_material_bytes must be a positive built-in integer")
 
         placeholders = ",".join("?" for _ in identifiers)
-        if max_records is not None:
+        if max_records is not None or max_material_bytes is not None:
             claim_stats = self.connection.execute(
                 "SELECT COUNT(*) AS record_count, COALESCE(SUM("
                 "length(CAST(COALESCE(er.quote, '') AS BLOB)) + "
@@ -1012,7 +1012,10 @@ class ReadOnlyProject:
                 assert event_stats is not None
                 event_count = int(event_stats["record_count"])
                 material_bytes += int(event_stats["material_bytes"])
-            if claim_count + event_count > max_records:
+            if (
+                max_records is not None
+                and claim_count + event_count > max_records
+            ):
                 raise InspectionLimitError(
                     "AFFECTED_EVIDENCE_LIMIT_EXCEEDED",
                     "source impact affected evidence exceeds the report limit",

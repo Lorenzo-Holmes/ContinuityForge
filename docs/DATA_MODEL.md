@@ -128,6 +128,26 @@ access_policy, created_at
 
 Events have immutable evidence references. v0.3 requires exactly one matching `narrative_event.created` ledger entry whose core fields and evidence material match storage. Models must not create events; they use `ClaimProposal`.
 
+## Persisted aggregate input limits
+
+Limits are measured on strict UTF-8 bytes, not Unicode code points. The Python
+storage boundary and canonical SQLite `BEFORE INSERT` triggers enforce the same
+values without truncation:
+
+| Persisted field | Maximum | Stable error code |
+|---|---:|---|
+| `ClaimProposal.text` | 256 KiB | `CLAIM_TEXT_BYTES_LIMIT` |
+| `ClaimProposal.rationale` | 256 KiB | `CLAIM_RATIONALE_BYTES_LIMIT` |
+| `subject`, `predicate`, `object_value`, `proposed_by`, `proposal_model` | 4 KiB each | `CLAIM_METADATA_BYTES_LIMIT` |
+| `NarrativeEvent.title` | 16 KiB | `EVENT_TITLE_BYTES_LIMIT` |
+| `NarrativeEvent.summary` | 256 KiB | `EVENT_SUMMARY_BYTES_LIMIT` |
+| canonical `NarrativeEvent.details_json` | 1 MiB | `EVENT_DETAILS_INVALID` |
+
+Migration preflight applies these limits before backup or schema mutation. A
+v0.2 or v0.3-alpha2 oversize row blocks migration; explicit v0.1 quarantine
+retains the complete raw row and creates no partial active aggregate or ledger
+entry.
+
 ## Access policy
 
 | Policy | Default agent compilation |
@@ -188,7 +208,7 @@ It excludes the quote and complete source body by default and has no authority t
 
 `ReadOnlyProject` opens existing recognized v0.2/v0.3 SQLite files through URI `mode=ro` plus SQLite `query_only`, rejects unknown/partial schemas, and never initializes or migrates a database. Inspection recomputes endpoint hashes/line counts and verifies the global ledger, affected-claim authority, and complete audit material for every affected event before returning a report. Event-audit divergence fails closed as `EVENT_AUDIT_INVALID` rather than exposing an unaudited event anchor.
 
-The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary final-v0.3 read/write surfaces reject it until the explicit backup-gated migration installs Source integrity triggers. That same-version hardening preserves the EventLedger head and refuses to reconstruct missing Source audit.
+The exact v0.3.0a2 schema is identified separately as `v0.3-alpha2`; ordinary final-v0.3 read/write surfaces reject it until the explicit backup-gated migration installs Source integrity and aggregate input-limit triggers. That same-version hardening preserves the EventLedger head, rejects oversize aggregates before backup, and refuses to reconstruct missing Source audit.
 
 `MigrationReport` carries:
 

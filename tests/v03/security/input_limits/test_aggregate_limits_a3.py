@@ -130,6 +130,25 @@ def test_event_fields_have_exact_utf8_byte_boundaries(
     ) == before
 
 
+def test_claim_byte_limit_is_checked_before_compatibility_whitespace_trim(
+    storage,
+) -> None:
+    evidence = _seed_evidence(storage)
+    # The historical API trims the stored claim text.  Limit enforcement must
+    # still inspect the complete caller input rather than silently dropping an
+    # over-limit suffix before counting bytes.
+    value = _utf8_text(256 * KIB) + " "
+    before = _counts(storage, "claim_proposals", "evidence_refs", "event_ledger")
+
+    _assert_limit_code(
+        lambda: storage.create_claim_proposal(_claim("text", value), (evidence,)),
+        "CLAIM_TEXT_BYTES_LIMIT",
+    )
+    assert _counts(
+        storage, "claim_proposals", "evidence_refs", "event_ledger"
+    ) == before
+
+
 @pytest.mark.parametrize("delta", [-1, 0, 1])
 def test_event_details_keeps_the_existing_one_mib_json_boundary(
     storage, delta: int
@@ -246,4 +265,33 @@ def test_direct_sql_cannot_bypass_event_byte_limits(
     assert code in str(caught.value)
     assert storage.connection.execute(
         "SELECT 1 FROM narrative_events WHERE event_id = ?", (values["event_id"],)
+    ).fetchone() is None
+
+
+def test_direct_sql_cannot_bypass_event_details_json_byte_limit(storage) -> None:
+    values: tuple[object, ...] = (
+        "raw_event_details",
+        "persona",
+        "alpha",
+        "narrative",
+        "ordinary title",
+        "ordinary summary",
+        "x" * (MIB + 1),
+        None,
+        None,
+        None,
+        None,
+        "agent_accessible",
+        "2026-01-01T00:00:00Z",
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="EVENT_DETAILS_INVALID"):
+        storage.connection.execute(
+            "INSERT INTO narrative_events "
+            "(event_id, persona_id, continuity, event_type, title, summary, "
+            "details_json, valid_from, valid_to, knowledge_from, knowledge_to, "
+            "access_policy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            values,
+        )
+    assert storage.connection.execute(
+        "SELECT 1 FROM narrative_events WHERE event_id = 'raw_event_details'"
     ).fetchone() is None

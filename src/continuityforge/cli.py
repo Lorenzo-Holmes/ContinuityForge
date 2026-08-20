@@ -701,7 +701,7 @@ def _require_readonly_sidecars(database: Path) -> None:
 def _require_current_database(database: str | Path) -> Path:
     resolved = _require_existing_database(database)
     kind = _database_schema_kind(resolved)
-    if kind in {SchemaKind.V01, SchemaKind.V02}:
+    if kind in {SchemaKind.V01, SchemaKind.V02, SchemaKind.V03_ALPHA2}:
         raise ExplicitMigrationRequiredError(
             "database requires explicit migration; run 'continuityforge migrate'"
         )

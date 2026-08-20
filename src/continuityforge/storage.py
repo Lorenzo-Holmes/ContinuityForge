@@ -37,6 +37,16 @@ from .exceptions import (
 )
 from .migrations import MigrationMode, MigrationReport, preflight_migration
 from .ingest import parse_json_content
+from .limits import (
+    MAX_CLAIM_METADATA_UTF8_BYTES,
+    MAX_CLAIM_RATIONALE_UTF8_BYTES,
+    MAX_CLAIM_TEXT_UTF8_BYTES,
+    MAX_EVENT_DETAILS_JSON_BYTES,
+    MAX_EVENT_SUMMARY_UTF8_BYTES,
+    MAX_EVENT_TITLE_UTF8_BYTES,
+    validate_claim_fields,
+    validate_event_fields,
+)
 from .models import (
     AccessPolicy,
     ClaimProposal,
@@ -55,7 +65,6 @@ from .source_integrity import SourceAuditSnapshot, validate_source_audits
 
 
 GENESIS_HASH = "0" * 64
-MAX_EVENT_DETAILS_JSON_BYTES = 1024 * 1024
 MAX_EVENT_DETAILS_DEPTH = 128
 MAX_METADATA_UTF8_BYTES = 4096
 _BIDI_CONTROL_CLASSES = frozenset({"RLE", "LRE", "RLO", "LRO", "PDF", "RLI", "LRI", "FSI", "PDI"})
@@ -1084,7 +1093,7 @@ class Storage:
 
         self._execute_script_atomic(
             connection,
-            """
+            f"""
             DROP TRIGGER IF EXISTS continuityforge_claims_insert_proposed;
             DROP TRIGGER IF EXISTS continuityforge_claims_fields_immutable;
             DROP TRIGGER IF EXISTS continuityforge_claims_no_delete;
@@ -1099,6 +1108,8 @@ class Storage:
             DROP TRIGGER IF EXISTS continuityforge_sources_identity_immutable;
             DROP TRIGGER IF EXISTS continuityforge_sources_updated_at_guard;
             DROP TRIGGER IF EXISTS continuityforge_sources_no_delete;
+            DROP TRIGGER IF EXISTS continuityforge_claims_input_limits;
+            DROP TRIGGER IF EXISTS continuityforge_events_input_limits;
 
             CREATE TRIGGER continuityforge_sources_identity_immutable
             BEFORE UPDATE ON sources
@@ -1127,6 +1138,44 @@ class Storage:
             CREATE TRIGGER continuityforge_sources_no_delete
             BEFORE DELETE ON sources BEGIN
                 SELECT RAISE(ABORT, 'Source rows cannot be deleted');
+            END;
+
+            CREATE TRIGGER continuityforge_claims_input_limits
+            BEFORE INSERT ON claim_proposals
+            BEGIN
+                SELECT CASE
+                    WHEN length(CAST(NEW.text AS BLOB)) > {MAX_CLAIM_TEXT_UTF8_BYTES}
+                    THEN RAISE(ABORT, 'CLAIM_TEXT_BYTES_LIMIT')
+                END;
+                SELECT CASE
+                    WHEN length(CAST(COALESCE(NEW.rationale, '') AS BLOB)) > {MAX_CLAIM_RATIONALE_UTF8_BYTES}
+                    THEN RAISE(ABORT, 'CLAIM_RATIONALE_BYTES_LIMIT')
+                END;
+                SELECT CASE
+                    WHEN length(CAST(COALESCE(NEW.subject, '') AS BLOB)) > {MAX_CLAIM_METADATA_UTF8_BYTES}
+                      OR length(CAST(COALESCE(NEW.predicate, '') AS BLOB)) > {MAX_CLAIM_METADATA_UTF8_BYTES}
+                      OR length(CAST(COALESCE(NEW.object_value, '') AS BLOB)) > {MAX_CLAIM_METADATA_UTF8_BYTES}
+                      OR length(CAST(COALESCE(NEW.proposed_by, '') AS BLOB)) > {MAX_CLAIM_METADATA_UTF8_BYTES}
+                      OR length(CAST(COALESCE(NEW.proposal_model, '') AS BLOB)) > {MAX_CLAIM_METADATA_UTF8_BYTES}
+                    THEN RAISE(ABORT, 'CLAIM_METADATA_BYTES_LIMIT')
+                END;
+            END;
+
+            CREATE TRIGGER continuityforge_events_input_limits
+            BEFORE INSERT ON narrative_events
+            BEGIN
+                SELECT CASE
+                    WHEN length(CAST(NEW.title AS BLOB)) > {MAX_EVENT_TITLE_UTF8_BYTES}
+                    THEN RAISE(ABORT, 'EVENT_TITLE_BYTES_LIMIT')
+                END;
+                SELECT CASE
+                    WHEN length(CAST(NEW.summary AS BLOB)) > {MAX_EVENT_SUMMARY_UTF8_BYTES}
+                    THEN RAISE(ABORT, 'EVENT_SUMMARY_BYTES_LIMIT')
+                END;
+                SELECT CASE
+                    WHEN length(CAST(NEW.details_json AS BLOB)) > {MAX_EVENT_DETAILS_JSON_BYTES}
+                    THEN RAISE(ABORT, 'EVENT_DETAILS_INVALID')
+                END;
             END;
 
             CREATE TRIGGER continuityforge_claims_insert_proposed
@@ -2449,6 +2498,17 @@ class Storage:
         valid_to = _normal_time(proposal.valid_to)
         knowledge_from = _normal_time(proposal.knowledge_from)
         knowledge_to = _normal_time(proposal.knowledge_to)
+        if not isinstance(proposal.text, str):
+            raise TypeError("claim.text must be text")
+        validate_claim_fields(
+            text=proposal.text,
+            subject=proposal.subject,
+            predicate=proposal.predicate,
+            object_value=proposal.object_value,
+            proposed_by=proposal.proposed_by,
+            proposal_model=proposal.proposal_model,
+            rationale=proposal.rationale,
+        )
         text = proposal.text.strip()
         if not text:
             text = " ".join(
@@ -2929,6 +2989,7 @@ class Storage:
         persona_id = _nonempty(event.persona_id, name="persona_id")
         continuity = _nonempty(event.continuity, name="continuity")
         event_type = _nonempty(event.event_type, name="event_type")
+        validate_event_fields(title=event.title, summary=event.summary)
         validate_interval(event.valid_from, event.valid_to, name="valid interval")
         validate_interval(
             event.knowledge_from, event.knowledge_to, name="knowledge interval"

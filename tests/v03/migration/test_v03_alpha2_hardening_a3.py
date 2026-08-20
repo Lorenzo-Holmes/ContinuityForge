@@ -17,11 +17,16 @@ from continuityforge.schema import (
 from continuityforge.storage import Storage
 
 
+_FINAL_INPUT_LIMIT_TRIGGERS = (
+    "continuityforge_claims_input_limits",
+    "continuityforge_events_input_limits",
+)
 _FINAL_SOURCE_TRIGGERS = (
     "continuityforge_sources_identity_immutable",
     "continuityforge_sources_updated_at_guard",
     "continuityforge_sources_no_delete",
 )
+_FINAL_V03_TRIGGERS = _FINAL_INPUT_LIMIT_TRIGGERS + _FINAL_SOURCE_TRIGGERS
 
 
 def _make_v03_alpha2(database: Path) -> tuple[str, tuple[int, str]]:
@@ -37,7 +42,7 @@ def _make_v03_alpha2(database: Path) -> tuple[str, tuple[int, str]]:
 
     connection = sqlite3.connect(database)
     try:
-        for trigger in _FINAL_SOURCE_TRIGGERS:
+        for trigger in _FINAL_V03_TRIGGERS:
             connection.execute(f'DROP TRIGGER "{trigger}"')
         connection.commit()
         fingerprint = fingerprint_schema(connection)
@@ -78,6 +83,19 @@ def test_v03_alpha2_to_final_v03_preserves_ledger_head(tmp_path: Path) -> None:
     assert _read_ledger_head(database) == ledger_head
     with closing(sqlite3.connect(report.backup_path)) as backup:
         assert fingerprint_schema(backup).kind is SchemaKind.V03_ALPHA2
+
+
+def test_schema3_missing_only_source_triggers_is_not_misclassified_as_alpha2(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "not-alpha2.db"
+    with Storage(database):
+        pass
+    with closing(sqlite3.connect(database)) as connection:
+        for trigger in _FINAL_SOURCE_TRIGGERS:
+            connection.execute(f'DROP TRIGGER "{trigger}"')
+        connection.commit()
+        assert fingerprint_schema(connection).kind is SchemaKind.PARTIAL
 
 
 def test_v03_alpha2_tampered_source_audit_blocks_before_backup(

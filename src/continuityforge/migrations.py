@@ -27,6 +27,14 @@ from .constants import SCHEMA_VERSION
 from .evidence import quote_sha256
 from .exceptions import MigrationError
 from .ingest import SourceInputError, extract_line_quote, parse_json_content, source_lines
+from .limits import (
+    MAX_CLAIM_METADATA_UTF8_BYTES,
+    MAX_CLAIM_RATIONALE_UTF8_BYTES,
+    MAX_CLAIM_TEXT_UTF8_BYTES,
+    MAX_EVENT_DETAILS_JSON_BYTES,
+    MAX_EVENT_SUMMARY_UTF8_BYTES,
+    MAX_EVENT_TITLE_UTF8_BYTES,
+)
 from .models import LedgerEntry, Source
 from .schema import (
     ALLOWED_MIGRATIONS,
@@ -323,6 +331,50 @@ def _valid_digest(value: object) -> bool:
     )
 
 
+def _check_aggregate_utf8_bytes(
+    issues: list[MigrationIssue],
+    value: object,
+    *,
+    table: str,
+    record_id: object,
+    field: str,
+    max_bytes: int,
+    code: str,
+) -> None:
+    """Fail closed when legacy aggregate text cannot fit the target schema.
+
+    Migration never truncates or normalizes persisted material.  Non-text
+    values remain the responsibility of the existing semantic validators; this
+    helper only performs a strict UTF-8 encoding and exact byte count.
+    """
+
+    if value is None or not isinstance(value, str):
+        return
+    try:
+        actual_bytes = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        _issue(
+            issues,
+            "INVALID_UNICODE",
+            f"{field} cannot be encoded as UTF-8",
+            table=table,
+            record_id=record_id,
+            field=field,
+            actual={"type": "str"},
+        )
+        return
+    if actual_bytes > max_bytes:
+        _issue(
+            issues,
+            code,
+            f"{field} exceeds the target UTF-8 byte limit",
+            table=table,
+            record_id=record_id,
+            field=field,
+            actual={"bytes": actual_bytes, "limit": max_bytes},
+        )
+
+
 def _check_time(
     issues: list[MigrationIssue],
     value: object,
@@ -531,6 +583,25 @@ def _validate_v01(connection: sqlite3.Connection) -> list[MigrationIssue]:
                     field=field,
                     actual=row.get(field),
                 )
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("claim"),
+            table="claims",
+            record_id=record_id,
+            field="claim",
+            max_bytes=MAX_CLAIM_TEXT_UTF8_BYTES,
+            code="CLAIM_TEXT_BYTES_LIMIT",
+        )
+        for field in ("subject", "predicate", "object_value"):
+            _check_aggregate_utf8_bytes(
+                issues,
+                row.get(field),
+                table="claims",
+                record_id=record_id,
+                field=field,
+                max_bytes=MAX_CLAIM_METADATA_UTF8_BYTES,
+                code="CLAIM_METADATA_BYTES_LIMIT",
+            )
         access = row.get("access_policy")
         if access not in _ACCESS:
             _issue(
@@ -707,6 +778,35 @@ def _validate_v01(connection: sqlite3.Connection) -> list[MigrationIssue]:
                         field=field,
                         actual=row.get(field),
                     )
+            _check_aggregate_utf8_bytes(
+                issues,
+                row.get("title"),
+                table=table,
+                record_id=record_id,
+                field="title",
+                max_bytes=MAX_EVENT_TITLE_UTF8_BYTES,
+                code="EVENT_TITLE_BYTES_LIMIT",
+            )
+            _check_aggregate_utf8_bytes(
+                issues,
+                row.get("summary", row.get("text")),
+                table=table,
+                record_id=record_id,
+                field="summary",
+                max_bytes=MAX_EVENT_SUMMARY_UTF8_BYTES,
+                code="EVENT_SUMMARY_BYTES_LIMIT",
+            )
+            details_field = "details_json" if "details_json" in row else "details"
+            if details_field in row:
+                _check_aggregate_utf8_bytes(
+                    issues,
+                    row.get(details_field),
+                    table=table,
+                    record_id=record_id,
+                    field=details_field,
+                    max_bytes=MAX_EVENT_DETAILS_JSON_BYTES,
+                    code="MIGRATION_EVENT_DETAILS_INVALID",
+                )
             access = row.get("access_policy", row.get("access"))
             if access not in _ACCESS:
                 _issue(
@@ -944,6 +1044,40 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
         )
 
     for claim_id, row in claims.items():
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("text"),
+            table="claim_proposals",
+            record_id=claim_id,
+            field="text",
+            max_bytes=MAX_CLAIM_TEXT_UTF8_BYTES,
+            code="CLAIM_TEXT_BYTES_LIMIT",
+        )
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("rationale"),
+            table="claim_proposals",
+            record_id=claim_id,
+            field="rationale",
+            max_bytes=MAX_CLAIM_RATIONALE_UTF8_BYTES,
+            code="CLAIM_RATIONALE_BYTES_LIMIT",
+        )
+        for field in (
+            "subject",
+            "predicate",
+            "object_value",
+            "proposed_by",
+            "proposal_model",
+        ):
+            _check_aggregate_utf8_bytes(
+                issues,
+                row.get(field),
+                table="claim_proposals",
+                record_id=claim_id,
+                field=field,
+                max_bytes=MAX_CLAIM_METADATA_UTF8_BYTES,
+                code="CLAIM_METADATA_BYTES_LIMIT",
+            )
         for field in ("persona_id", "continuity", "text"):
             valid = (
                 _valid_metadata_text(row.get(field))
@@ -1616,6 +1750,33 @@ def _validate_v02(connection: sqlite3.Connection) -> list[MigrationIssue]:
         )
         if valid_event_id is not None:
             events_by_id[valid_event_id] = row
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("title"),
+            table="narrative_events",
+            record_id=event_id,
+            field="title",
+            max_bytes=MAX_EVENT_TITLE_UTF8_BYTES,
+            code="EVENT_TITLE_BYTES_LIMIT",
+        )
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("summary"),
+            table="narrative_events",
+            record_id=event_id,
+            field="summary",
+            max_bytes=MAX_EVENT_SUMMARY_UTF8_BYTES,
+            code="EVENT_SUMMARY_BYTES_LIMIT",
+        )
+        _check_aggregate_utf8_bytes(
+            issues,
+            row.get("details_json"),
+            table="narrative_events",
+            record_id=event_id,
+            field="details_json",
+            max_bytes=MAX_EVENT_DETAILS_JSON_BYTES,
+            code="MIGRATION_EVENT_DETAILS_INVALID",
+        )
         for field in ("persona_id", "continuity", "event_type"):
             if not _valid_metadata_text(row.get(field)):
                 _issue(

@@ -230,6 +230,8 @@ V03_ALPHA2_REQUIRED_TRIGGERS = frozenset(
 
 
 V03_REQUIRED_TRIGGERS = V03_ALPHA2_REQUIRED_TRIGGERS | {
+    "continuityforge_claims_input_limits",
+    "continuityforge_events_input_limits",
     "continuityforge_sources_identity_immutable",
     "continuityforge_sources_updated_at_guard",
     "continuityforge_sources_no_delete",
@@ -282,6 +284,7 @@ V02_SOURCE_SNAPSHOT_SQL_DIGESTS = CANONICAL_TABLE_SQL_DIGESTS["source_snapshots"
 }
 
 CANONICAL_TRIGGER_SQL_DIGESTS: Mapping[str, str] = {
+    "continuityforge_claims_input_limits": "cb6561c31eaa281b250ae101a246bae414ff9c1f88148bac9d354084f57306c4",
     "continuityforge_claims_fields_immutable": "82e95d9b64bc6ba2193b41d7adc06c6c2b8338ca80b5c4b49210502cbcd3cc4f",
     "continuityforge_claims_insert_proposed": "202f92163c4669b37176b6e1d9a6ad2c0a7a1b3a010705247eaec6f827b8f740",
     "continuityforge_claims_no_delete": "b109272c34bba45b24d8256dad83f91d4b59b63e11baf34ebc814a06ce3429b6",
@@ -294,6 +297,7 @@ CANONICAL_TRIGGER_SQL_DIGESTS: Mapping[str, str] = {
     "continuityforge_event_evidence_no_update": "c1a4facae4d0e25b940ebd113963fbbd89272fa492971d453738ebe07df77d6b",
     "continuityforge_events_no_delete": "110500f824eeb2fbfee2aeb5c733eca142079e03f7a541a50848bb25219d12fa",
     "continuityforge_events_no_update": "c96a0314aaa7fe0dc98ceef18e693bad4e0ef0d67bce3927d7caf89966781dc6",
+    "continuityforge_events_input_limits": "06e76057cd3dcc1e7b441a6e602f1ed9bafa660dadfe629cf760f2962c67994d",
     "continuityforge_evidence_continuity_insert": "df418d66bfa5f2ed9eb56d242c3dc2beb0a50c9a52f289ce91fcf1efba4bfa61",
     "continuityforge_evidence_no_delete": "1c1f8070811975e31cd044ad8733768c47273db6a985e11b2b00bd42b96dd4c1",
     "continuityforge_evidence_no_update": "6b9fe887b795913771db5bb074694ed49bffea8f908b7ad4d4c5180ec80d1a3f",
