@@ -62,13 +62,32 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Run tests with coverage gate
         run: >-
-          python -m pytest
+          python -W error::ResourceWarning -m pytest
           --cov=continuityforge
+          --cov-branch
           --cov-report=term-missing
           --cov-report=xml
-          --cov-fail-under=75
+          --cov-report=json:coverage.json
+          --cov-fail-under=80
+      - name: Enforce release coverage contracts
+        run: >-
+          python scripts/check_coverage.py
+          --json coverage.json
+          --critical-file src/continuityforge/sqlite_safety.py
+          --critical-branch src/continuityforge/source_integrity.py:142:143
+          --critical-branch src/continuityforge/source_integrity.py:142:149
+          --critical-branch src/continuityforge/compiler.py:204:205
+          --critical-branch src/continuityforge/compiler.py:204:214
+          --critical-branch src/continuityforge/inspection.py:478:479
+          --critical-branch src/continuityforge/inspection.py:478:484
+          --critical-branch src/continuityforge/limits.py:62:63
+          --critical-branch src/continuityforge/limits.py:62:67
+          --critical-branch src/continuityforge/readonly.py:986:987
+          --critical-branch src/continuityforge/readonly.py:986:1035
+          --critical-branch src/continuityforge/readonly.py:1027:1031
+          --critical-branch src/continuityforge/readonly.py:1027:1035
       - name: Compile source and tests
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests scripts
 
   build:
     name: Build and install distributions
