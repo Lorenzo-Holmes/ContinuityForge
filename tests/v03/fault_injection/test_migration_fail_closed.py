@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
@@ -209,7 +210,8 @@ def test_failed_backup_verification_removes_partial_artifact(
 
 
 def test_migration_report_redacts_sensitive_values_and_absolute_paths() -> None:
-    fingerprint = fingerprint_schema(sqlite3.connect(":memory:"))
+    with closing(sqlite3.connect(":memory:")) as connection:
+        fingerprint = fingerprint_schema(connection)
     report = MigrationReport(
         mode=MigrationMode.STRICT,
         source=fingerprint,

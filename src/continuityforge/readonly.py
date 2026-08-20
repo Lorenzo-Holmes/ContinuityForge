@@ -43,6 +43,7 @@ from .models import (
 )
 from .ingest import SourceInputError, parse_json_content
 from .schema import SchemaFingerprint, SchemaKind, fingerprint_schema
+from .sqlite_safety import SQLiteSidecarError, validate_readonly_sidecars
 from .source_integrity import SourceAuditSnapshot
 
 
@@ -178,16 +179,15 @@ class ReadOnlyProject:
         if not resolved.is_file():
             raise NotFoundError(f"project database is not a file: {resolved}")
 
-        # SQLite may create a missing shared-memory index even for mode=ro when
-        # a WAL is present.  That would violate this repository's file-level
-        # read-only promise, so reject this incomplete sidecar set before
-        # opening the database at all.
-        wal_path = resolved.with_name(resolved.name + "-wal")
-        shm_path = resolved.with_name(resolved.name + "-shm")
-        if wal_path.exists() and not shm_path.exists():
+        # SQLite may create/follow sidecars even for mode=ro.  Reject an
+        # incomplete set, symbolic link, directory, or other non-regular file
+        # before opening the database at all.
+        try:
+            validate_readonly_sidecars(resolved)
+        except SQLiteSidecarError as exc:
             raise ReadOnlyStorageError(
-                "read-only inspection requires an existing -shm sidecar when -wal exists"
-            )
+                f"read-only inspection rejected an unsafe sidecar: {exc}"
+            ) from exc
 
         # Path.as_uri percent-encodes reserved characters and works for both
         # Windows drive paths and POSIX paths.  Do not add immutable=1 here: it
@@ -244,6 +244,10 @@ class ReadOnlyProject:
             if connection is not None:
                 connection.close()
             raise SchemaError(f"invalid ContinuityForge database: {resolved}") from exc
+        except BaseException:
+            if connection is not None:
+                connection.close()
+            raise
         assert connection is not None
         return cls(resolved, connection, fingerprint)
 

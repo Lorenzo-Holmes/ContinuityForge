@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import os
 from pathlib import Path
 import shutil
@@ -81,9 +82,10 @@ def test_replaced_temporary_backup_never_overwrites_the_replacement(
     database = tmp_path / "source.db"
     victim = tmp_path / "victim.db"
     _create_v01(database, project_root)
-    with sqlite3.connect(victim) as connection:
+    with closing(sqlite3.connect(victim)) as connection:
         connection.execute("CREATE TABLE sentinel (value TEXT NOT NULL)")
         connection.execute("INSERT INTO sentinel VALUES ('preserve me')")
+        connection.commit()
 
     original_connect = sqlite3.connect
     replacement: Path | None = None
@@ -105,7 +107,7 @@ def test_replaced_temporary_backup_never_overwrites_the_replacement(
             replacement = candidate
         return original_connect(target, *args, **kwargs)
 
-    with original_connect(database) as source:
+    with closing(original_connect(database)) as source:
         monkeypatch.setattr(migrations.sqlite3, "connect", replacing_connect)
         report = preflight_migration(source, create_backup=True)
 
@@ -115,7 +117,7 @@ def test_replaced_temporary_backup_never_overwrites_the_replacement(
     }
     assert replacement is not None and replacement.exists()
     assert not list(tmp_path.glob("source.db.pre-v3*.bak"))
-    with original_connect(victim) as connection:
+    with closing(original_connect(victim)) as connection:
         assert connection.execute("SELECT value FROM sentinel").fetchone() == (
             "preserve me",
         )
@@ -129,7 +131,7 @@ def test_backup_is_logically_bound_to_the_open_migration_source(
     _create_v01(database, project_root)
     _create_v01(replacement, project_root)
     replacement_content = "different source contents"
-    with sqlite3.connect(replacement) as connection:
+    with closing(sqlite3.connect(replacement)) as connection:
         connection.execute(
             "UPDATE source_snapshots SET content = ?, sha256 = ?",
             (
@@ -137,6 +139,7 @@ def test_backup_is_logically_bound_to_the_open_migration_source(
                 sha256(replacement_content.encode("utf-8")).hexdigest(),
             ),
         )
+        connection.commit()
 
     original_open_readonly = migrations._open_readonly
     redirected = False
@@ -148,7 +151,7 @@ def test_backup_is_logically_bound_to_the_open_migration_source(
             return original_open_readonly(replacement)
         return original_open_readonly(path)
 
-    with sqlite3.connect(database, isolation_level=None) as source:
+    with closing(sqlite3.connect(database, isolation_level=None)) as source:
         source.execute("BEGIN IMMEDIATE")
         monkeypatch.setattr(
             migrations,

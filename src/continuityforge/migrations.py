@@ -46,6 +46,7 @@ from .source_integrity import (
     SourceAuditSnapshot,
     replay_source_audits,
 )
+from .sqlite_safety import SQLiteSidecarError, validate_readonly_sidecars
 from .timeutil import parse_instant
 
 
@@ -2194,19 +2195,22 @@ def _logical_database_sha256(connection: sqlite3.Connection) -> str:
 
 def _open_readonly(path: Path) -> sqlite3.Connection:
     resolved = path.expanduser().resolve()
-    wal_path = resolved.with_name(resolved.name + "-wal")
-    shm_path = resolved.with_name(resolved.name + "-shm")
-    if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+    try:
+        validate_readonly_sidecars(resolved)
+    except SQLiteSidecarError as exc:
         raise MigrationError(
-            "read-only migration preflight requires an existing -shm sidecar "
-            "when -wal exists"
-        )
+            f"read-only migration preflight rejected an unsafe sidecar: {exc}"
+        ) from exc
     uri = resolved.as_uri() + "?mode=ro"
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only = ON")
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+    except BaseException:
+        connection.close()
+        raise
 
 
 def preflight_migration(

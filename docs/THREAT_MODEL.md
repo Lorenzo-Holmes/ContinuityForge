@@ -122,6 +122,16 @@ The exact v0.3.0a2 structural fingerprint has a same-version hardening edge to f
 
 The implementation writes to an unpredictable same-directory temporary regular file, tracks its identity, enforces POSIX mode `0600`, verifies identity before writing, compares a streamed logical digest with the locked source connection, flushes the artifact, then publishes without replacing an existing destination. Existing regular backups are preserved through numbered names; symbolic-link candidates fail closed. These controls prevent accidental overwrite and common path-substitution mistakes inside the stated trusted-owner boundary, but they are not encryption or a defense against a malicious operating-system account.
 
+Every read-only SQLite entry point inspects both `-wal` and `-shm` names with
+`lstat` before opening the database. Symbolic links, broken links, directories,
+and other non-regular sidecars fail closed; a WAL without an existing SHM also
+fails closed so SQLite cannot create the missing file. This is a preflight, not
+an operating-system lock: the `lstat`-to-open interval remains inside the
+trusted local owner/directory boundary. SQLite may update coordination bytes in
+an already-existing regular SHM while leaving the main database, WAL, schema,
+and domain state unchanged. Inspect a private consistent copy when byte-for-byte
+filesystem immutability is required.
+
 In v0.3.0a2, explicit quarantine applies only to malformed v0.1 rows: the raw row is preserved in legacy storage and omitted from active domain mappings. Malformed v0.2 data remains blocking. Quarantine must not turn malformed time into unbounded time or missing access into `agent_accessible`.
 
 ## Disclosure boundaries

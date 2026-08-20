@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -54,6 +53,7 @@ from .models import (
 from .serialization import json_dumps, to_primitive, write_json
 from .readonly import ReadOnlyProject
 from .schema import SchemaKind, fingerprint_schema
+from .sqlite_safety import SQLiteSidecarError, validate_readonly_sidecars
 from .storage import Storage
 from .timeutil import isoformat_utc
 from .validate import ProjectValidator
@@ -688,14 +688,14 @@ def _database_schema_kind(database: Path) -> SchemaKind:
 
 
 def _require_readonly_sidecars(database: Path) -> None:
-    """Prevent SQLite from creating a missing shared-memory WAL sidecar."""
+    """Reject incomplete, linked, or non-regular SQLite sidecar sets."""
 
-    wal_path = database.with_name(database.name + "-wal")
-    shm_path = database.with_name(database.name + "-shm")
-    if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+    try:
+        validate_readonly_sidecars(database)
+    except SQLiteSidecarError as exc:
         raise ReadOnlyStorageError(
-            "read-only command requires an existing -shm sidecar when -wal exists"
-        )
+            f"read-only command rejected an unsafe sidecar: {exc}"
+        ) from exc
 
 
 def _require_current_database(database: str | Path) -> Path:

@@ -16,7 +16,6 @@ from enum import Enum
 from hashlib import sha256
 import json
 import math
-import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -62,6 +61,7 @@ from .models import (
 from .timeutil import isoformat_utc, validate_interval
 from .schema import SchemaKind, fingerprint_schema, validate_schema
 from .source_integrity import SourceAuditSnapshot, validate_source_audits
+from .sqlite_safety import SQLiteSidecarError, validate_readonly_sidecars
 
 
 GENESIS_HASH = "0" * 64
@@ -296,13 +296,12 @@ class Storage:
                         "read-only storage requires a filesystem path, not a SQLite URI"
                     )
                 path = Path(self.database).expanduser().resolve()
-                wal_path = path.with_name(path.name + "-wal")
-                shm_path = path.with_name(path.name + "-shm")
-                if os.path.lexists(wal_path) and not os.path.lexists(shm_path):
+                try:
+                    validate_readonly_sidecars(path)
+                except SQLiteSidecarError as exc:
                     raise ReadOnlyStorageError(
-                        "read-only storage requires an existing -shm sidecar "
-                        "when -wal exists"
-                    )
+                        f"read-only storage rejected an unsafe sidecar: {exc}"
+                    ) from exc
                 database_argument = path.as_uri() + "?mode=ro"
                 uri = True
             connection = sqlite3.connect(
@@ -312,20 +311,18 @@ class Storage:
                 check_same_thread=False,
                 uri=uri,
             )
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("PRAGMA busy_timeout = 30000")
-            if self.readonly:
-                connection.execute("PRAGMA query_only = ON")
-                query_only = connection.execute("PRAGMA query_only").fetchone()
-                if query_only is None or int(query_only[0]) != 1:
-                    connection.close()
-                    raise ReadOnlyStorageError(
-                        "SQLite did not enable the read-only query barrier"
-                    )
             self._connection = connection
-
             try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA busy_timeout = 30000")
+                if self.readonly:
+                    connection.execute("PRAGMA query_only = ON")
+                    query_only = connection.execute("PRAGMA query_only").fetchone()
+                    if query_only is None or int(query_only[0]) != 1:
+                        raise ReadOnlyStorageError(
+                            "SQLite did not enable the read-only query barrier"
+                        )
                 source = fingerprint_schema(connection)
                 if self.readonly:
                     if source.kind is not SchemaKind.V03:

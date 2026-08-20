@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -91,18 +92,19 @@ def _json_error(capsys) -> dict[str, object]:
 
 
 def _create_v01(database: Path, project_root: Path) -> None:
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         connection.executescript(
             (project_root / "tests" / "baseline" / "v01_schema.sql").read_text(
                 encoding="utf-8"
             )
         )
+        connection.commit()
 
 
 def _create_v02(database: Path) -> None:
     with Storage(database):
         pass
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         for name in V03_REQUIRED_TRIGGERS - V02_REQUIRED_TRIGGERS:
             connection.execute(f'DROP TRIGGER IF EXISTS "{name}"')
         connection.execute("UPDATE schema_metadata SET schema_version = 2")
@@ -167,7 +169,7 @@ def test_ordinary_commands_never_implicitly_migrate_legacy_databases(
     assert error["error"] == "ExplicitMigrationRequiredError"
     assert _digest(database) == before
     assert not list(tmp_path.glob(f"{database.name}.pre-v3*.bak"))
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         assert classify_schema(connection) is (
             SchemaKind.V01 if legacy_version == 1 else SchemaKind.V02
         )

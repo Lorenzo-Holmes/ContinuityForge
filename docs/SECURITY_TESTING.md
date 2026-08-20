@@ -82,6 +82,7 @@ Every supported starting schema needs at least these cases:
 6. a restored v0.1/v0.2 fixture still passes its observable compatibility suite;
 7. preflight and inspection leave the main database, WAL, schema, and logical row counts unchanged; SQLite may update coordination bytes in an already-existing `-shm` file.
 8. backup publication preserves existing regular artifacts, rejects symbolic-link targets, verifies file identity/type, and retains POSIX mode `0600`.
+9. every read-only entry point rejects symbolic links, broken links, directories, and other non-regular WAL/SHM sidecars before SQLite opens the database; a WAL without SHM is rejected without creating SHM.
 
 `migration-check` is implemented but unreleased. Its CLI path sets
 `create_backup=False`; tests must assert no database, missing sidecar, backup,
